@@ -1,0 +1,6 @@
+{
+  "name": "OrthoCabinet — Gestion de cabinet d'orthophonie",
+  "description": "Application bilingue (FR/AR) de gestion de cabinet d'orthophonie en Algérie : parcours patient, agenda, bilans cliniques, caisse, reçus, rappels WhatsApp et impression. 100 % hors-ligne et chiffrée localement.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
