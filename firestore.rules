@@ -98,7 +98,7 @@ service cloud.firestore {
 
     function isValidPatient(data, userId, patientId) {
       return data.keys().hasAll(['ownerId', 'id', 'nom', 'naissance', 'tel', 'parent', 'medecin', 'patho', 'motif', 'notes', 'stage', 'th', 'an', 'createdAt', 'updatedAt']) &&
-        data.keys().hasOnly(['ownerId', 'id', 'nom', 'naissance', 'tel', 'parent', 'medecin', 'patho', 'motif', 'notes', 'stage', 'th', 'an', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['ownerId', 'id', 'nom', 'naissance', 'tel', 'parent', 'medecin', 'patho', 'motif', 'notes', 'stage', 'th', 'billingMode', 'an', 'createdAt', 'updatedAt']) &&
         data.ownerId is string && data.ownerId == userId && data.ownerId == request.auth.uid &&
         data.id is string && isValidId(data.id) && data.id == patientId &&
         data.nom is string && data.nom.size() <= 200 &&
@@ -111,6 +111,7 @@ service cloud.firestore {
         data.notes is string && data.notes.size() <= 10000 &&
         data.stage is string && data.stage in ['req', 'diag', 'orient', 'suivi', 'clos'] &&
         data.th is string && data.th.size() <= 100 &&
+        (!('billingMode' in data) || (data.billingMode is string && data.billingMode in ['monthly', 'session'])) &&
         isValidAnamnese(data.an) &&
         data.createdAt is timestamp &&
         data.updatedAt is timestamp;
@@ -236,7 +237,7 @@ service cloud.firestore {
           incoming().id == existing().id &&
           incoming().createdAt == existing().createdAt &&
           incoming().updatedAt == request.time &&
-          incoming().diff(existing()).affectedKeys().hasOnly(['nom', 'naissance', 'tel', 'parent', 'medecin', 'patho', 'motif', 'notes', 'stage', 'th', 'an', 'updatedAt']) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['nom', 'naissance', 'tel', 'parent', 'medecin', 'patho', 'motif', 'notes', 'stage', 'th', 'billingMode', 'an', 'updatedAt']) &&
           hasPracticeParent(userId);
         allow delete: if isValidId(userId) && isValidId(patientId) && isOwner(userId) && hasPracticeParent(userId);
       }

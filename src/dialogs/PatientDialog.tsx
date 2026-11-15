@@ -48,6 +48,7 @@ export const PatientDialog: React.FC<PatientDialogProps> = ({
     if (patient) {
       return {
         ...patient,
+        billingMode: patient.billingMode === 'session' ? 'session' : 'monthly',
         an: {...patient.an},
       };
     }
@@ -63,6 +64,7 @@ export const PatientDialog: React.FC<PatientDialogProps> = ({
       notes: '',
       stage: 'req',
       th: db.staff.length === 1 ? db.staff[0].id : '',
+      billingMode: 'monthly',
       an: emptyAnamnese(),
     };
   }, [patient, db.staff]);
@@ -413,6 +415,26 @@ export const PatientDialog: React.FC<PatientDialogProps> = ({
                 >
                   <option value="">{t('unassigned')}</option>
                   <TherapistSelectOptions db={db} t={t} />
+                </select>
+              </div>
+
+              <div className="sm:col-span-2">
+                <label htmlFor="pat-billing-mode" className="block text-sm font-medium mb-1">
+                  {t('billingModeLabel')}
+                </label>
+                <select
+                  id="pat-billing-mode"
+                  value={form.billingMode ?? 'monthly'}
+                  onChange={(e) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      billingMode: e.target.value === 'session' ? 'session' : 'monthly',
+                    }))
+                  }
+                  className="w-full min-h-11 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm"
+                >
+                  <option value="monthly">{t('billingMonthly')}</option>
+                  <option value="session">{t('billingSession')}</option>
                 </select>
               </div>
             </div>

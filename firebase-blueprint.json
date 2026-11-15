@@ -97,6 +97,11 @@
           "enum": ["req", "diag", "orient", "suivi", "clos"]
         },
         "th": { "type": "string", "maxLength": 100 },
+        "billingMode": {
+          "type": "string",
+          "enum": ["monthly", "session"],
+          "description": "Patient payment cadence (monthly by default or per session)."
+        },
         "an": { "type": "object" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }

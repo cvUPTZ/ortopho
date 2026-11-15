@@ -2,6 +2,7 @@ export type Lang = 'fr' | 'ar';
 export type Stage = 'req' | 'diag' | 'orient' | 'suivi' | 'clos';
 export type RdvStatut = 'prevu' | 'fait' | 'absent';
 export type RdvKind = 'diag' | 'suivi';
+export type BillingMode = 'monthly' | 'session';
 
 export interface ExpertiseDomain {
   id: string;
@@ -42,6 +43,7 @@ export interface Patient {
   notes: string; // max 10000
   stage: Stage;
   th: string; // staff id or ''
+  billingMode?: BillingMode; // defaults to 'monthly'
   an: Anamnese;
 }
 

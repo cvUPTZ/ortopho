@@ -5,6 +5,7 @@ import type {
   AiSettings,
   Anamnese,
   Bilan,
+  BillingMode,
   Cabinet,
   DB,
   EncryptedPayload,
@@ -293,6 +294,7 @@ export function sanitize(raw: unknown, fallbackLang: Lang = 'fr'): DB {
     const patho = /^[0-8]$/.test(rawPatho) ? rawPatho : '';
     const rawTh = clampStr(p.th, 100);
     const th = staffIds.has(rawTh) ? rawTh : '';
+    const billingMode: BillingMode = p.billingMode === 'session' ? 'session' : 'monthly';
 
     patients.push({
       id,
@@ -306,6 +308,7 @@ export function sanitize(raw: unknown, fallbackLang: Lang = 'fr'): DB {
       notes: clampStr(p.notes, 10000),
       stage,
       th,
+      billingMode,
       an,
     });
   }

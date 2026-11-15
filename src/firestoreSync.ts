@@ -84,6 +84,7 @@ function toPatientFields(p: Patient) {
     notes: p.notes,
     stage: p.stage,
     th: p.th,
+    billingMode: p.billingMode === 'session' ? 'session' : 'monthly',
     an: p.an,
   });
 }

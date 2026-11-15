@@ -1,4 +1,4 @@
-import React, {useMemo, useState} from 'react';
+import React, {useEffect, useMemo, useState} from 'react';
 import {
   AlertCircle,
   Calendar,
@@ -14,7 +14,7 @@ import {
   Search,
 } from 'lucide-react';
 import type {TranslationKey} from '../i18n';
-import type {DB, Patient, Rdv} from '../types';
+import type {BillingMode, DB, Patient, Rdv} from '../types';
 import {
   formatCurrency,
   formatMonthShort,
@@ -27,8 +27,9 @@ import {
   sortPatientsByName,
 } from '../utils';
 
-export type MatrixMode = 'sessions' | 'annual';
+export type MatrixMode = 'annual' | 'sessions';
 export type MatrixStatusFilter = 'all' | 'unpaid' | 'paid';
+export type BillingModeFilter = 'all' | BillingMode;
 
 type CellTone = 'paid' | 'partial' | 'unpaid' | 'planned' | 'absent' | 'credit';
 
@@ -52,11 +53,13 @@ interface MonthAggregate {
   plannedCount: number;
   absentCount: number;
   totalCount: number;
+  unpaidSessionIds: string[];
   tone: CellTone | 'empty';
 }
 
 interface PatientMatrixRow {
   patient: Patient;
+  billingMode: BillingMode;
   subtitle: string;
   sessions: Rdv[];
   months: MonthAggregate[];
@@ -66,6 +69,8 @@ interface PatientMatrixRow {
   unpaidSessionIds: string[];
   rowTone: CellTone;
 }
+
+const PAGE_SIZE = 25;
 
 function getSessionTone(r: Rdv): CellTone {
   const paid = rdvPaidTotal(r);
@@ -80,7 +85,6 @@ function getSessionTone(r: Rdv): CellTone {
     if (paid > 0) return 'partial';
     return 'planned';
   }
-  // absent
   if (paid > 0) return 'credit';
   return 'absent';
 }
@@ -134,15 +138,18 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
   t,
 }) => {
   const lang = db.lang;
-  const [mode, setMode] = useState<MatrixMode>('sessions');
+  // Default is Monthly ('annual': Patients x Months), since patients pay monthly by default
+  const [mode, setMode] = useState<MatrixMode>('annual');
   const [year, setYear] = useState<number>(() => {
     const parsed = Number(month.slice(0, 4));
     return Number.isFinite(parsed) && parsed > 2000 ? parsed : new Date().getFullYear();
   });
   const [statusFilter, setStatusFilter] = useState<MatrixStatusFilter>('all');
+  const [billingFilter, setBillingFilter] = useState<BillingModeFilter>('all');
   const [domainFilter, setDomainFilter] = useState<string>('all');
   const [query, setQuery] = useState<string>('');
   const [includePlanned, setIncludePlanned] = useState<boolean>(true);
+  const [page, setPage] = useState<number>(1);
 
   const staffMap = useMemo(() => new Map(db.staff.map((s) => [s.id, s])), [db.staff]);
 
@@ -173,7 +180,7 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
     }
   };
 
-  // Build full matrix rows for the current mode, domain filter, and planned toggle
+  // Build full matrix rows for the current mode, domain filter, billing filter, and planned toggle
   const allRows = useMemo<PatientMatrixRow[]>(() => {
     const periodPrefix = mode === 'sessions' ? month : `${year}-`;
     const rdvsByPatient = new Map<string, Rdv[]>();
@@ -191,6 +198,9 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
     const rows: PatientMatrixRow[] = [];
 
     for (const patient of sortedPatients) {
+      const billingMode: BillingMode = patient.billingMode === 'session' ? 'session' : 'monthly';
+      if (billingFilter !== 'all' && billingMode !== billingFilter) continue;
+
       const sessions = (rdvsByPatient.get(patient.id) ?? []).sort((a, b) =>
         `${a.date} ${a.heure}`.localeCompare(`${b.date} ${b.heure}`),
       );
@@ -237,6 +247,7 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
                   plannedCount: 0,
                   absentCount: 0,
                   totalCount: 0,
+                  unpaidSessionIds: [],
                   tone: 'empty',
                 };
               }
@@ -245,12 +256,19 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
               let doneCount = 0;
               let plannedCount = 0;
               let absentCount = 0;
+              const mUnpaidIds: string[] = [];
               for (const ms of mSessions) {
+                const p = rdvPaidTotal(ms);
                 mBilled += rdvBilledAmount(ms);
-                mPaid += rdvPaidTotal(ms);
-                if (ms.statut === 'fait') doneCount++;
-                else if (ms.statut === 'prevu') plannedCount++;
-                else absentCount++;
+                mPaid += p;
+                if (ms.statut === 'fait') {
+                  doneCount++;
+                  if (p < ms.tarif) mUnpaidIds.push(ms.id);
+                } else if (ms.statut === 'prevu') {
+                  plannedCount++;
+                } else {
+                  absentCount++;
+                }
               }
               const mRem = mBilled - mPaid;
               let tone: CellTone = 'planned';
@@ -273,6 +291,7 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
                 plannedCount,
                 absentCount,
                 totalCount: mSessions.length,
+                unpaidSessionIds: mUnpaidIds,
                 tone,
               };
             })
@@ -281,13 +300,16 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
       const staffObj = staffMap.get(patient.th);
       const domObj = getStaffDomain(db.domains, staffObj);
       const staffName = getStaffName(db, patient.th);
-      const subtitleParts = [domObj?.name, staffName, patient.tel].filter(
+      const cadenceLabel =
+        billingMode === 'session' ? t('billingSessionShort') : t('billingMonthlyShort');
+      const subtitleParts = [cadenceLabel, domObj?.name ?? staffName, patient.tel].filter(
         (x): x is string => Boolean(x && x.trim()),
       );
 
       rows.push({
         patient,
-        subtitle: subtitleParts.slice(0, 2).join(' · '),
+        billingMode,
+        subtitle: subtitleParts.slice(0, 3).join(' · '),
         sessions,
         months,
         billed,
@@ -298,7 +320,6 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
       });
     }
 
-    // Order: Unpaid/Partial highest owed first, then Paid/Credit, then Planned/Absent
     const rank = (tone: CellTone): number => {
       switch (tone) {
         case 'unpaid':
@@ -325,7 +346,21 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
     });
 
     return rows;
-  }, [db.rdv, db.patients, db.domains, mode, month, year, domainFilter, includePlanned, lang, monthKeys, staffMap]);
+  }, [
+    db.rdv,
+    db.patients,
+    db.domains,
+    mode,
+    month,
+    year,
+    domainFilter,
+    billingFilter,
+    includePlanned,
+    lang,
+    monthKeys,
+    staffMap,
+    t,
+  ]);
 
   // Apply search + payment status filter
   const visibleRows = useMemo(() => {
@@ -341,7 +376,19 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
     });
   }, [allRows, statusFilter, query]);
 
-  // KPI metrics over the unfiltered-by-status period (respecting domain & period)
+  const totalPages = Math.max(1, Math.ceil(visibleRows.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+
+  useEffect(() => {
+    setPage(1);
+  }, [mode, month, year, statusFilter, billingFilter, domainFilter, query, includePlanned]);
+
+  const pagedRows = useMemo(() => {
+    const start = (safePage - 1) * PAGE_SIZE;
+    return visibleRows.slice(start, start + PAGE_SIZE);
+  }, [visibleRows, safePage]);
+
+  // KPI metrics
   const summaryStats = useMemo(() => {
     let billed = 0;
     let paid = 0;
@@ -360,10 +407,10 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
 
   const maxSessionCols = useMemo(() => {
     if (mode !== 'sessions') return 0;
-    return Math.max(4, ...visibleRows.map((r) => r.sessions.length));
-  }, [mode, visibleRows]);
+    return Math.max(4, ...pagedRows.map((r) => r.sessions.length));
+  }, [mode, pagedRows]);
 
-  // Column totals for visible rows
+  // Column totals across all visibleRows (not just current page)
   const columnTotals = useMemo(() => {
     let totalBilled = 0;
     let totalPaid = 0;
@@ -377,20 +424,13 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
       const cols = Array.from({length: maxSessionCols}, (_, idx) => {
         let colBilled = 0;
         let colPaid = 0;
-        let paidCount = 0;
-        let unpaidCount = 0;
         for (const r of visibleRows) {
           const s = r.sessions[idx];
           if (!s) continue;
-          const b = rdvBilledAmount(s);
-          const p = rdvPaidTotal(s);
-          colBilled += b;
-          colPaid += p;
-          const tone = getSessionTone(s);
-          if (tone === 'paid' || tone === 'credit') paidCount++;
-          else if (tone === 'unpaid' || tone === 'partial') unpaidCount++;
+          colBilled += rdvBilledAmount(s);
+          colPaid += rdvPaidTotal(s);
         }
-        return {billed: colBilled, paid: colPaid, paidCount, unpaidCount};
+        return {billed: colBilled, paid: colPaid};
       });
       return {totalBilled, totalPaid, totalRemaining, sessionCols: cols, monthCols: []};
     }
@@ -416,14 +456,18 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
       return s;
     };
 
+    const sessionColCount =
+      mode === 'sessions' ? Math.max(4, ...visibleRows.map((r) => r.sessions.length)) : 0;
+
     const dynamicHeaders =
       mode === 'sessions'
-        ? Array.from({length: maxSessionCols}, (_, i) => `${t('matrixColSessionShort')}${i + 1}`)
+        ? Array.from({length: sessionColCount}, (_, i) => `${t('matrixColSessionShort')}${i + 1}`)
         : monthKeys.map((ym) => formatMonthShort(ym, lang));
 
     const headerRow = [
       t('colPatient'),
       t('phoneLabel'),
+      t('billingModeLabel'),
       ...dynamicHeaders,
       t('totalBilled'),
       t('totalCollected'),
@@ -434,7 +478,7 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
     const dataRows = visibleRows.map((row) => {
       const cells =
         mode === 'sessions'
-          ? Array.from({length: maxSessionCols}, (_, idx) => {
+          ? Array.from({length: sessionColCount}, (_, idx) => {
               const s = row.sessions[idx];
               if (!s) return '';
               const tone = getSessionTone(s);
@@ -448,6 +492,7 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
       return [
         row.patient.nom,
         row.patient.tel,
+        row.billingMode === 'session' ? t('billingSessionShort') : t('billingMonthlyShort'),
         ...cells,
         row.billed,
         row.paid,
@@ -471,11 +516,15 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
     URL.revokeObjectURL(url);
   };
 
-  const hasActiveFilters = statusFilter !== 'all' || domainFilter !== 'all' || query.trim() !== '';
+  const hasActiveFilters =
+    statusFilter !== 'all' ||
+    billingFilter !== 'all' ||
+    domainFilter !== 'all' ||
+    query.trim() !== '';
 
   return (
     <div className="space-y-4">
-      {/* Unified KPI Strip (4 cells separated by hairline dividers, single surface) */}
+      {/* Unified KPI Strip */}
       <div className="grid grid-cols-2 lg:grid-cols-4 divide-y lg:divide-y-0 lg:divide-x divide-slate-200 dark:divide-slate-800 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden">
         <div className="px-4 py-3.5">
           <div className="text-xs font-medium text-slate-500 dark:text-slate-400">
@@ -557,19 +606,6 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
                 <button
                   type="button"
                   role="tab"
-                  aria-selected={mode === 'sessions'}
-                  onClick={() => setMode('sessions')}
-                  className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
-                    mode === 'sessions'
-                      ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm'
-                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
-                  }`}
-                >
-                  {t('matrixModeSessions')}
-                </button>
-                <button
-                  type="button"
-                  role="tab"
                   aria-selected={mode === 'annual'}
                   onClick={() => {
                     const mYear = Number(month.slice(0, 4));
@@ -583,6 +619,19 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
                   }`}
                 >
                   {t('matrixModeAnnual')}
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={mode === 'sessions'}
+                  onClick={() => setMode('sessions')}
+                  className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
+                    mode === 'sessions'
+                      ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
+                  }`}
+                >
+                  {t('matrixModeSessions')}
                 </button>
               </div>
 
@@ -629,10 +678,10 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
             </div>
           </div>
 
-          {/* Filter Bar: Search + Status Segmented Filter + Domain Select + Planned Toggle */}
+          {/* Filter Bar */}
           <div className="flex flex-wrap items-center justify-between gap-2.5">
             <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[240px]">
-              <div className="relative flex-1 min-w-[200px] max-w-xs">
+              <div className="relative flex-1 min-w-[180px] max-w-xs">
                 <Search className="pointer-events-none absolute start-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
                 <input
                   type="search"
@@ -680,6 +729,18 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
                 </button>
               </div>
 
+              {/* Billing Cadence Filter */}
+              <select
+                aria-label={t('billingModeLabel')}
+                value={billingFilter}
+                onChange={(e) => setBillingFilter(e.target.value as BillingModeFilter)}
+                className="min-h-9 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-2.5 py-1 text-xs font-medium"
+              >
+                <option value="all">{t('billingAllModes')}</option>
+                <option value="monthly">{t('billingMonthlyShort')}</option>
+                <option value="session">{t('billingSessionShort')}</option>
+              </select>
+
               {db.domains.length > 0 && (
                 <select
                   aria-label={t('domainLabel')}
@@ -708,7 +769,6 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
                 <span>{t('matrixIncludePlannedLabel')}</span>
               </label>
 
-              {/* Inline Legend (Icon + Text, no decorative dots) */}
               <div className="hidden xl:flex items-center gap-3 text-xs text-slate-600 dark:text-slate-400">
                 <span className="inline-flex items-center gap-1">
                   <ToneIcon tone="paid" className="h-3.5 w-3.5" />
@@ -742,6 +802,7 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
                 type="button"
                 onClick={() => {
                   setStatusFilter('all');
+                  setBillingFilter('all');
                   setDomainFilter('all');
                   setQuery('');
                 }}
@@ -753,329 +814,387 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
             )}
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-xs sm:text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50/90 dark:bg-slate-950/70 text-[11px] font-semibold text-slate-500 dark:text-slate-400">
-                  <th className="sticky start-0 z-20 min-w-[200px] max-w-[240px] bg-slate-50 dark:bg-slate-950 border-e border-slate-200 dark:border-slate-800 px-4 py-2.5 text-start">
-                    {t('colPatient')}
-                  </th>
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse text-xs sm:text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50/90 dark:bg-slate-950/70 text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+                    <th className="sticky start-0 z-20 min-w-[200px] max-w-[240px] bg-slate-50 dark:bg-slate-950 border-e border-slate-200 dark:border-slate-800 px-4 py-2.5 text-start">
+                      {t('colPatient')}
+                    </th>
 
-                  {mode === 'sessions'
-                    ? Array.from({length: maxSessionCols}, (_, idx) => (
-                        <th
-                          key={idx}
-                          className="min-w-[132px] border-e border-slate-200/70 dark:border-slate-800/70 px-2.5 py-2.5 text-center tabular-nums"
-                        >
-                          {t('matrixColSessionShort')}
-                          {idx + 1}
-                        </th>
-                      ))
-                    : monthKeys.map((ym) => (
-                        <th
-                          key={ym}
-                          className="min-w-[98px] border-e border-slate-200/70 dark:border-slate-800/70 px-2 py-2.5 text-center capitalize"
-                        >
-                          {formatMonthShort(ym, lang)}
-                        </th>
-                      ))}
-
-                  <th className="min-w-[96px] border-s border-slate-200 dark:border-slate-800 px-3 py-2.5 text-end">
-                    {t('totalBilled')}
-                  </th>
-                  <th className="min-w-[96px] px-3 py-2.5 text-end">{t('colPaid')}</th>
-                  <th className="min-w-[104px] px-3 py-2.5 text-end">{t('colRemaining')}</th>
-                  <th className="min-w-[116px] px-3 py-2.5 text-start">{t('matrixColStatus')}</th>
-                  <th className="min-w-[136px] px-3 py-2.5 text-end">{t('colActions')}</th>
-                </tr>
-              </thead>
-
-              <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                {visibleRows.map((row) => (
-                  <tr
-                    key={row.patient.id}
-                    className="group hover:bg-slate-50/70 dark:hover:bg-slate-800/30 transition-colors"
-                  >
-                    {/* Sticky Patient Info Cell */}
-                    <td className="sticky start-0 z-10 bg-white dark:bg-slate-900 group-hover:bg-slate-50 dark:group-hover:bg-slate-800/80 border-e border-slate-200 dark:border-slate-800 px-4 py-2.5 align-middle">
-                      <button
-                        type="button"
-                        onClick={() => onOpenPatient(row.patient)}
-                        className="block w-full text-start focus-visible:outline-2 focus-visible:outline-offset-2"
-                      >
-                        <div className="font-semibold text-sm text-slate-900 dark:text-slate-100 truncate hover:underline">
-                          {row.patient.nom}
-                        </div>
-                        {row.subtitle && (
-                          <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
-                            {row.subtitle}
-                          </div>
-                        )}
-                      </button>
-                    </td>
-
-                    {/* Matrix Body Cells */}
                     {mode === 'sessions'
-                      ? Array.from({length: maxSessionCols}, (_, colIdx) => {
-                          const s = row.sessions[colIdx];
-                          if (!s) {
+                      ? Array.from({length: maxSessionCols}, (_, idx) => (
+                          <th
+                            key={idx}
+                            className="min-w-[132px] border-e border-slate-200/70 dark:border-slate-800/70 px-2.5 py-2.5 text-center tabular-nums"
+                          >
+                            {t('matrixColSessionShort')}
+                            {idx + 1}
+                          </th>
+                        ))
+                      : monthKeys.map((ym) => (
+                          <th
+                            key={ym}
+                            className="min-w-[106px] border-e border-slate-200/70 dark:border-slate-800/70 px-2 py-2.5 text-center capitalize"
+                          >
+                            {formatMonthShort(ym, lang)}
+                          </th>
+                        ))}
+
+                    <th className="min-w-[96px] border-s border-slate-200 dark:border-slate-800 px-3 py-2.5 text-end">
+                      {t('totalBilled')}
+                    </th>
+                    <th className="min-w-[96px] px-3 py-2.5 text-end">{t('colPaid')}</th>
+                    <th className="min-w-[104px] px-3 py-2.5 text-end">{t('colRemaining')}</th>
+                    <th className="min-w-[112px] px-3 py-2.5 text-start">{t('matrixColStatus')}</th>
+                    <th className="min-w-[136px] px-3 py-2.5 text-end">{t('colActions')}</th>
+                  </tr>
+                </thead>
+
+                <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                  {pagedRows.map((row) => (
+                    <tr
+                      key={row.patient.id}
+                      className="group hover:bg-slate-50/70 dark:hover:bg-slate-800/30 transition-colors"
+                    >
+                      {/* Sticky Patient Info Cell */}
+                      <td className="sticky start-0 z-10 bg-white dark:bg-slate-900 group-hover:bg-slate-50 dark:group-hover:bg-slate-800/80 border-e border-slate-200 dark:border-slate-800 px-4 py-2.5 align-middle">
+                        <button
+                          type="button"
+                          onClick={() => onOpenPatient(row.patient)}
+                          className="block w-full text-start focus-visible:outline-2 focus-visible:outline-offset-2"
+                        >
+                          <div className="font-semibold text-sm text-slate-900 dark:text-slate-100 truncate hover:underline">
+                            {row.patient.nom}
+                          </div>
+                          {row.subtitle && (
+                            <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
+                              {row.subtitle}
+                            </div>
+                          )}
+                        </button>
+                      </td>
+
+                      {/* Matrix Body Cells */}
+                      {mode === 'sessions'
+                        ? Array.from({length: maxSessionCols}, (_, colIdx) => {
+                            const s = row.sessions[colIdx];
+                            if (!s) {
+                              return (
+                                <td
+                                  key={colIdx}
+                                  className="border-e border-slate-100 dark:border-slate-800/60 px-2 py-2 text-center text-xs text-slate-300 dark:text-slate-700"
+                                >
+                                  —
+                                </td>
+                              );
+                            }
+                            const tone = getSessionTone(s);
+                            const paid = rdvPaidTotal(s);
+                            const dom = getDomainById(db.domains, resolveDomainId(s));
+                            const canQuickPay = s.statut === 'fait' && paid < s.tarif;
+
                             return (
                               <td
-                                key={colIdx}
-                                className="border-e border-slate-100 dark:border-slate-800/60 px-2 py-2 text-center text-xs text-slate-300 dark:text-slate-700"
+                                key={s.id}
+                                className="border-e border-slate-100 dark:border-slate-800/60 p-1.5 align-top"
                               >
-                                —
-                              </td>
-                            );
-                          }
-                          const tone = getSessionTone(s);
-                          const paid = rdvPaidTotal(s);
-                          const dom = getDomainById(db.domains, resolveDomainId(s));
-                          const canQuickPay = s.statut === 'fait' && paid < s.tarif;
-
-                          return (
-                            <td
-                              key={s.id}
-                              className="border-e border-slate-100 dark:border-slate-800/60 p-1.5 align-top"
-                            >
-                              <div
-                                className={`rounded-lg border px-2 py-1.5 transition-colors ${getToneClasses(tone)}`}
-                              >
-                                <button
-                                  type="button"
-                                  onClick={() => onOpenRdv(s)}
-                                  className="block w-full text-start"
+                                <div
+                                  className={`rounded-lg border px-2 py-1.5 transition-colors ${getToneClasses(tone)}`}
                                 >
-                                  <div className="flex items-center justify-between gap-1 text-[11px] opacity-80">
-                                    <span className="tabular-nums font-medium">
-                                      {formatDayMonthNumeric(s.date)}
-                                    </span>
-                                    {domainFilter === 'all' && dom && (
-                                      <span className="truncate max-w-[68px]">{dom.name}</span>
-                                    )}
-                                  </div>
-
-                                  <div className="mt-1 flex items-center gap-1 text-xs font-semibold">
-                                    <ToneIcon tone={tone} />
-                                    <span className="truncate">{getToneLabel(tone)}</span>
-                                  </div>
-
-                                  <div className="mt-0.5 text-[11px] tabular-nums font-medium">
-                                    {tone === 'absent'
-                                      ? '—'
-                                      : tone === 'partial'
-                                        ? `${formatCurrency(paid, lang)} / ${formatCurrency(s.tarif, lang)}`
-                                        : tone === 'paid' || tone === 'credit'
-                                          ? formatCurrency(paid, lang)
-                                          : formatCurrency(s.tarif, lang)}
-                                  </div>
-                                </button>
-
-                                {canQuickPay && (
                                   <button
                                     type="button"
-                                    onClick={() =>
-                                      onQuickMarkRdvsPaid([s.id], t('matrixSessionPaidToast'))
-                                    }
-                                    className="mt-1.5 inline-flex w-full items-center justify-center gap-1 rounded border border-current/25 bg-white/80 dark:bg-slate-900/70 px-1.5 py-0.5 text-[11px] font-semibold hover:bg-white dark:hover:bg-slate-900 transition-colors"
+                                    onClick={() => onOpenRdv(s)}
+                                    className="block w-full text-start"
                                   >
-                                    <Check className="h-3 w-3" />
-                                    <span>{t('matrixQuickPayBtn')}</span>
+                                    <div className="flex items-center justify-between gap-1 text-[11px] opacity-80">
+                                      <span className="tabular-nums font-medium">
+                                        {formatDayMonthNumeric(s.date)}
+                                      </span>
+                                      {domainFilter === 'all' && dom && (
+                                        <span className="truncate max-w-[68px]">{dom.name}</span>
+                                      )}
+                                    </div>
+
+                                    <div className="mt-1 flex items-center gap-1 text-xs font-semibold">
+                                      <ToneIcon tone={tone} />
+                                      <span className="truncate">{getToneLabel(tone)}</span>
+                                    </div>
+
+                                    <div className="mt-0.5 text-[11px] tabular-nums font-medium">
+                                      {tone === 'absent'
+                                        ? '—'
+                                        : tone === 'partial'
+                                          ? `${formatCurrency(paid, lang)} / ${formatCurrency(s.tarif, lang)}`
+                                          : tone === 'paid' || tone === 'credit'
+                                            ? formatCurrency(paid, lang)
+                                            : formatCurrency(s.tarif, lang)}
+                                    </div>
                                   </button>
-                                )}
-                              </div>
-                            </td>
-                          );
-                        })
-                      : row.months.map((m) => {
-                          if (m.tone === 'empty') {
+
+                                  {canQuickPay && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        onQuickMarkRdvsPaid([s.id], t('matrixSessionPaidToast'))
+                                      }
+                                      className="mt-1.5 inline-flex w-full items-center justify-center gap-1 rounded border border-current/25 bg-white/80 dark:bg-slate-900/70 px-1.5 py-0.5 text-[11px] font-semibold hover:bg-white dark:hover:bg-slate-900 transition-colors"
+                                    >
+                                      <Check className="h-3 w-3" />
+                                      <span>{t('matrixQuickPayBtn')}</span>
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            );
+                          })
+                        : row.months.map((m) => {
+                            if (m.tone === 'empty') {
+                              return (
+                                <td
+                                  key={m.ym}
+                                  className="border-e border-slate-100 dark:border-slate-800/60 px-2 py-2 text-center text-xs text-slate-300 dark:text-slate-700"
+                                >
+                                  —
+                                </td>
+                              );
+                            }
+                            const canQuickPayMonth = m.unpaidSessionIds.length > 0 && m.remaining > 0;
                             return (
                               <td
                                 key={m.ym}
-                                className="border-e border-slate-100 dark:border-slate-800/60 px-2 py-2 text-center text-xs text-slate-300 dark:text-slate-700"
+                                className="border-e border-slate-100 dark:border-slate-800/60 p-1.5 align-top"
                               >
-                                —
+                                <div
+                                  className={`rounded-lg border px-2 py-1.5 transition-colors ${getToneClasses(m.tone)}`}
+                                >
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      onChangeMonth(m.ym);
+                                      setMode('sessions');
+                                    }}
+                                    title={t('matrixDrilldownHint')}
+                                    className="block w-full text-start"
+                                  >
+                                    <div className="flex items-center justify-between gap-1 text-[11px] font-semibold">
+                                      <span className="inline-flex items-center gap-1 truncate">
+                                        <ToneIcon tone={m.tone} className="h-3 w-3 shrink-0" />
+                                        <span className="truncate">{getToneLabel(m.tone)}</span>
+                                      </span>
+                                      <span className="text-[10px] opacity-75 tabular-nums shrink-0">
+                                        {m.totalCount}
+                                      </span>
+                                    </div>
+                                    <div className="mt-1 text-[11px] tabular-nums font-medium">
+                                      {m.tone === 'partial'
+                                        ? `${formatCurrency(m.paid, lang)}/${formatCurrency(m.billed, lang)}`
+                                        : m.billed > 0
+                                          ? formatCurrency(
+                                              m.tone === 'unpaid' ? m.billed : m.paid,
+                                              lang,
+                                            )
+                                          : `${m.totalCount} ${
+                                              m.totalCount > 1
+                                                ? t('sessionsCount')
+                                                : t('sessionSingular')
+                                            }`}
+                                    </div>
+                                  </button>
+
+                                  {canQuickPayMonth && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        onQuickMarkRdvsPaid(
+                                          m.unpaidSessionIds,
+                                          t('matrixSettledToast'),
+                                        )
+                                      }
+                                      className="mt-1.5 inline-flex w-full items-center justify-center gap-1 rounded border border-current/25 bg-white/80 dark:bg-slate-900/70 px-1.5 py-0.5 text-[11px] font-semibold hover:bg-white dark:hover:bg-slate-900 transition-colors"
+                                    >
+                                      <Check className="h-3 w-3" />
+                                      <span>{t('matrixQuickPayBtn')}</span>
+                                    </button>
+                                  )}
+                                </div>
                               </td>
                             );
-                          }
-                          return (
-                            <td
-                              key={m.ym}
-                              className="border-e border-slate-100 dark:border-slate-800/60 p-1.5 align-top"
+                          })}
+
+                      {/* Row Summary Columns */}
+                      <td className="border-s border-slate-200 dark:border-slate-800 px-3 py-2.5 text-end tabular-nums whitespace-nowrap font-medium text-slate-700 dark:text-slate-300">
+                        {formatCurrency(row.billed, lang)}
+                      </td>
+
+                      <td className="px-3 py-2.5 text-end tabular-nums whitespace-nowrap font-semibold text-emerald-700 dark:text-emerald-400">
+                        {formatCurrency(row.paid, lang)}
+                      </td>
+
+                      <td className="px-3 py-2.5 text-end tabular-nums whitespace-nowrap font-bold">
+                        {row.remaining > 0 ? (
+                          <span className="text-rose-700 dark:text-rose-400">
+                            {formatCurrency(row.remaining, lang)}
+                          </span>
+                        ) : row.remaining < 0 ? (
+                          <span className="text-teal-700 dark:text-teal-400">
+                            {t('creditLabel')} {formatCurrency(Math.abs(row.remaining), lang)}
+                          </span>
+                        ) : (
+                          <span className="text-slate-500 dark:text-slate-400">
+                            {formatCurrency(0, lang)}
+                          </span>
+                        )}
+                      </td>
+
+                      <td className="px-3 py-2.5 whitespace-nowrap">
+                        <span
+                          className={`inline-flex items-center gap-1.5 text-xs font-semibold ${
+                            row.rowTone === 'paid' || row.rowTone === 'credit'
+                              ? 'text-emerald-700 dark:text-emerald-400'
+                              : row.rowTone === 'partial'
+                                ? 'text-amber-700 dark:text-amber-400'
+                                : row.rowTone === 'unpaid'
+                                  ? 'text-rose-700 dark:text-rose-400'
+                                  : 'text-slate-500 dark:text-slate-400'
+                          }`}
+                        >
+                          <ToneIcon tone={row.rowTone} />
+                          <span>{getToneLabel(row.rowTone)}</span>
+                        </span>
+                      </td>
+
+                      <td className="px-3 py-2.5 text-end whitespace-nowrap">
+                        <div className="inline-flex items-center justify-end gap-1.5">
+                          {row.unpaidSessionIds.length > 0 && row.remaining > 0 && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                onQuickMarkRdvsPaid(row.unpaidSessionIds, t('matrixSettledToast'))
+                              }
+                              className="inline-flex min-h-8 items-center gap-1 rounded-md accent-bg px-2.5 py-1 text-xs font-semibold whitespace-nowrap"
                             >
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  onChangeMonth(m.ym);
-                                  setMode('sessions');
-                                }}
-                                title={t('matrixDrilldownHint')}
-                                className={`block w-full rounded-lg border px-2 py-1.5 text-start transition-colors hover:brightness-95 ${getToneClasses(m.tone)}`}
-                              >
-                                <div className="flex items-center gap-1 text-[11px] font-semibold">
-                                  <ToneIcon tone={m.tone} className="h-3 w-3 shrink-0" />
-                                  <span className="truncate">{getToneLabel(m.tone)}</span>
-                                </div>
-                                <div className="mt-1 text-[11px] tabular-nums font-medium">
-                                  {m.tone === 'partial'
-                                    ? `${formatCurrency(m.paid, lang)}/${formatCurrency(m.billed, lang)}`
-                                    : m.billed > 0
-                                      ? formatCurrency(m.tone === 'unpaid' ? m.billed : m.paid, lang)
-                                      : `${m.totalCount} ${
-                                          m.totalCount > 1 ? t('sessionsCount') : t('sessionSingular')
-                                        }`}
-                                </div>
-                              </button>
-                            </td>
-                          );
-                        })}
-
-                    {/* Row Summary Columns */}
-                    <td className="border-s border-slate-200 dark:border-slate-800 px-3 py-2.5 text-end tabular-nums whitespace-nowrap font-medium text-slate-700 dark:text-slate-300">
-                      {formatCurrency(row.billed, lang)}
-                    </td>
-
-                    <td className="px-3 py-2.5 text-end tabular-nums whitespace-nowrap font-semibold text-emerald-700 dark:text-emerald-400">
-                      {formatCurrency(row.paid, lang)}
-                    </td>
-
-                    <td className="px-3 py-2.5 text-end tabular-nums whitespace-nowrap font-bold">
-                      {row.remaining > 0 ? (
-                        <span className="text-rose-700 dark:text-rose-400">
-                          {formatCurrency(row.remaining, lang)}
-                        </span>
-                      ) : row.remaining < 0 ? (
-                        <span className="text-teal-700 dark:text-teal-400">
-                          {t('creditLabel')} {formatCurrency(Math.abs(row.remaining), lang)}
-                        </span>
-                      ) : (
-                        <span className="text-slate-500 dark:text-slate-400">
-                          {formatCurrency(0, lang)}
-                        </span>
-                      )}
-                    </td>
-
-                    {/* Status Column (Color + Icon + Text) */}
-                    <td className="px-3 py-2.5 whitespace-nowrap">
-                      <span
-                        className={`inline-flex items-center gap-1.5 text-xs font-semibold ${
-                          row.rowTone === 'paid' || row.rowTone === 'credit'
-                            ? 'text-emerald-700 dark:text-emerald-400'
-                            : row.rowTone === 'partial'
-                              ? 'text-amber-700 dark:text-amber-400'
-                              : row.rowTone === 'unpaid'
-                                ? 'text-rose-700 dark:text-rose-400'
-                                : 'text-slate-500 dark:text-slate-400'
-                        }`}
-                      >
-                        <ToneIcon tone={row.rowTone} />
-                        <span>{getToneLabel(row.rowTone)}</span>
-                      </span>
-                    </td>
-
-                    {/* Row Actions */}
-                    <td className="px-3 py-2.5 text-end whitespace-nowrap">
-                      <div className="inline-flex items-center justify-end gap-1.5">
-                        {row.unpaidSessionIds.length > 0 && row.remaining > 0 && (
+                              <Check className="h-3.5 w-3.5" />
+                              <span>{t('matrixSettleAllBtn')}</span>
+                            </button>
+                          )}
                           <button
                             type="button"
-                            onClick={() =>
-                              onQuickMarkRdvsPaid(row.unpaidSessionIds, t('matrixSettledToast'))
-                            }
-                            className="inline-flex min-h-8 items-center gap-1 rounded-md accent-bg px-2.5 py-1 text-xs font-semibold whitespace-nowrap"
+                            onClick={() => onPrintStatement(row.patient.id)}
+                            title={t('printStatementBtn')}
+                            aria-label={`${t('printStatementBtn')} — ${row.patient.nom}`}
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
                           >
-                            <Check className="h-3.5 w-3.5" />
-                            <span>{t('matrixSettleAllBtn')}</span>
+                            <Printer className="h-3.5 w-3.5" />
                           </button>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => onPrintStatement(row.patient.id)}
-                          title={t('printStatementBtn')}
-                          aria-label={`${t('printStatementBtn')} — ${row.patient.nom}`}
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
-                        >
-                          <Printer className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+
+                <tfoot>
+                  <tr className="border-t-2 border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950/70 text-xs font-bold">
+                    <td className="sticky start-0 z-10 bg-slate-50 dark:bg-slate-950 border-e border-slate-200 dark:border-slate-800 px-4 py-3">
+                      {t('totalsLabel')} ({visibleRows.length})
                     </td>
+
+                    {mode === 'sessions'
+                      ? columnTotals.sessionCols.map((col, idx) => (
+                          <td
+                            key={idx}
+                            className="border-e border-slate-200/70 dark:border-slate-800/70 px-2 py-2.5 text-center tabular-nums"
+                          >
+                            {col.billed > 0 || col.paid > 0 ? (
+                              <div className="space-y-0.5">
+                                <div className="text-emerald-700 dark:text-emerald-400">
+                                  {formatCurrency(col.paid, lang)}
+                                </div>
+                                <div className="text-[10px] font-medium text-slate-500 dark:text-slate-400">
+                                  / {formatCurrency(col.billed, lang)}
+                                </div>
+                              </div>
+                            ) : (
+                              <span className="text-slate-400">—</span>
+                            )}
+                          </td>
+                        ))
+                      : columnTotals.monthCols.map((col) => (
+                          <td
+                            key={col.ym}
+                            className="border-e border-slate-200/70 dark:border-slate-800/70 px-2 py-2.5 text-center tabular-nums"
+                          >
+                            {col.billed > 0 || col.paid > 0 ? (
+                              <div className="space-y-0.5">
+                                <div className="text-emerald-700 dark:text-emerald-400">
+                                  {formatCurrency(col.paid, lang)}
+                                </div>
+                                <div className="text-[10px] font-medium text-slate-500 dark:text-slate-400">
+                                  / {formatCurrency(col.billed, lang)}
+                                </div>
+                              </div>
+                            ) : (
+                              <span className="text-slate-400">—</span>
+                            )}
+                          </td>
+                        ))}
+
+                    <td className="border-s border-slate-200 dark:border-slate-800 px-3 py-3 text-end tabular-nums whitespace-nowrap">
+                      {formatCurrency(columnTotals.totalBilled, lang)}
+                    </td>
+                    <td className="px-3 py-3 text-end tabular-nums whitespace-nowrap text-emerald-700 dark:text-emerald-400">
+                      {formatCurrency(columnTotals.totalPaid, lang)}
+                    </td>
+                    <td className="px-3 py-3 text-end tabular-nums whitespace-nowrap">
+                      <span
+                        className={
+                          columnTotals.totalRemaining > 0
+                            ? 'text-rose-700 dark:text-rose-400'
+                            : 'text-slate-700 dark:text-slate-300'
+                        }
+                      >
+                        {columnTotals.totalRemaining < 0
+                          ? `${t('creditLabel')} ${formatCurrency(
+                              Math.abs(columnTotals.totalRemaining),
+                              lang,
+                            )}`
+                          : formatCurrency(columnTotals.totalRemaining, lang)}
+                      </span>
+                    </td>
+                    <td colSpan={2} className="px-3 py-3" />
                   </tr>
-                ))}
-              </tbody>
+                </tfoot>
+              </table>
+            </div>
 
-              <tfoot>
-                <tr className="border-t-2 border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950/70 text-xs font-bold">
-                  <td className="sticky start-0 z-10 bg-slate-50 dark:bg-slate-950 border-e border-slate-200 dark:border-slate-800 px-4 py-3">
-                    {t('totalsLabel')} ({visibleRows.length})
-                  </td>
-
-                  {mode === 'sessions'
-                    ? columnTotals.sessionCols.map((col, idx) => (
-                        <td
-                          key={idx}
-                          className="border-e border-slate-200/70 dark:border-slate-800/70 px-2 py-2.5 text-center tabular-nums"
-                        >
-                          {col.billed > 0 || col.paid > 0 ? (
-                            <div className="space-y-0.5">
-                              <div className="text-emerald-700 dark:text-emerald-400">
-                                {formatCurrency(col.paid, lang)}
-                              </div>
-                              <div className="text-[10px] font-medium text-slate-500 dark:text-slate-400">
-                                / {formatCurrency(col.billed, lang)}
-                              </div>
-                            </div>
-                          ) : (
-                            <span className="text-slate-400">—</span>
-                          )}
-                        </td>
-                      ))
-                    : columnTotals.monthCols.map((col) => (
-                        <td
-                          key={col.ym}
-                          className="border-e border-slate-200/70 dark:border-slate-800/70 px-2 py-2.5 text-center tabular-nums"
-                        >
-                          {col.billed > 0 || col.paid > 0 ? (
-                            <div className="space-y-0.5">
-                              <div className="text-emerald-700 dark:text-emerald-400">
-                                {formatCurrency(col.paid, lang)}
-                              </div>
-                              <div className="text-[10px] font-medium text-slate-500 dark:text-slate-400">
-                                / {formatCurrency(col.billed, lang)}
-                              </div>
-                            </div>
-                          ) : (
-                            <span className="text-slate-400">—</span>
-                          )}
-                        </td>
-                      ))}
-
-                  <td className="border-s border-slate-200 dark:border-slate-800 px-3 py-3 text-end tabular-nums whitespace-nowrap">
-                    {formatCurrency(columnTotals.totalBilled, lang)}
-                  </td>
-                  <td className="px-3 py-3 text-end tabular-nums whitespace-nowrap text-emerald-700 dark:text-emerald-400">
-                    {formatCurrency(columnTotals.totalPaid, lang)}
-                  </td>
-                  <td className="px-3 py-3 text-end tabular-nums whitespace-nowrap">
-                    <span
-                      className={
-                        columnTotals.totalRemaining > 0
-                          ? 'text-rose-700 dark:text-rose-400'
-                          : 'text-slate-700 dark:text-slate-300'
-                      }
-                    >
-                      {columnTotals.totalRemaining < 0
-                        ? `${t('creditLabel')} ${formatCurrency(
-                            Math.abs(columnTotals.totalRemaining),
-                            lang,
-                          )}`
-                        : formatCurrency(columnTotals.totalRemaining, lang)}
-                    </span>
-                  </td>
-                  <td colSpan={2} className="px-3 py-3" />
-                </tr>
-              </tfoot>
-            </table>
-          </div>
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between border-t border-slate-200 dark:border-slate-800 px-4 py-2.5 text-xs text-slate-600 dark:text-slate-400">
+                <span className="tabular-nums">
+                  {t('ledgerPageLabel')} {safePage} / {totalPages} · {visibleRows.length}{' '}
+                  {t('navPatients').toLowerCase()}
+                </span>
+                <div className="inline-flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    disabled={safePage <= 1}
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    className="min-h-8 rounded-md border border-slate-200 dark:border-slate-700 px-2.5 py-1 font-medium hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40"
+                  >
+                    {t('ledgerPrevPage')}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={safePage >= totalPages}
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    className="min-h-8 rounded-md border border-slate-200 dark:border-slate-700 px-2.5 py-1 font-medium hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40"
+                  >
+                    {t('ledgerNextPage')}
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
         )}
       </section>
     </div>
