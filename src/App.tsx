@@ -77,7 +77,7 @@ import type {
   Staff,
   ViewId,
 } from './types';
-import {contrastForeground} from './utils';
+import {contrastForeground, rdvPaidTotal} from './utils';
 import {CaisseView} from './views/CaisseView';
 import {AgendaView} from './views/AgendaView';
 import {ParcoursView} from './views/ParcoursView';
@@ -599,6 +599,28 @@ export default function App() {
       ...db,
       rdv: db.rdv.map((r) => (r.id === rdvId ? {...r, statut} : r)),
     });
+  };
+
+  const handleQuickMarkRdvsPaid = (rdvIds: string[], toastMsg: string) => {
+    if (rdvIds.length === 0) return;
+    const targetSet = new Set(rdvIds);
+    const today = todayISO();
+    const snapshot = structuredClone(db);
+    let changed = false;
+    const nextRdv = db.rdv.map((r) => {
+      if (!targetSet.has(r.id)) return r;
+      const paid = rdvPaidTotal(r);
+      const rem = r.tarif - paid;
+      if (rem <= 0) return r;
+      changed = true;
+      return {
+        ...r,
+        pay: [...r.pay, {d: today, m: Math.round(rem)}],
+      };
+    });
+    if (!changed) return;
+    void commitDB({...db, rdv: nextRdv});
+    showToast(toastMsg, snapshot);
   };
 
   const handleSendWhatsApp = (rdv: Rdv) => {
@@ -1231,6 +1253,7 @@ export default function App() {
               onPrintStatement={(pid) =>
                 triggerPrint({kind: 'statement', patientId: pid})
               }
+              onQuickMarkRdvsPaid={handleQuickMarkRdvsPaid}
               t={t}
             />
           )}
