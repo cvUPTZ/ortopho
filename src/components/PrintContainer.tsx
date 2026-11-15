@@ -500,108 +500,206 @@ export const PrintContainer: React.FC<PrintContainerProps> = ({db, doc, t}) => {
   if (doc.kind === 'planning') {
     const daysAll = Array.from({length: 7}, (_, idx) => addDaysISO(doc.weekStart, idx));
     const weekEnd = daysAll[6];
-    const staffList =
-      db.staff.length > 0 ? db.staff : [{id: '', nom: db.cab.pra || t('appDefaultTitle'), role: 'main' as const}];
+
+    // If a specific therapist is filtered (or there is 0/1 therapist), print that therapist's Heure × Jours grid
+    if (doc.thId || db.staff.length <= 1) {
+      const targetStaff = doc.thId
+        ? db.staff.find((s) => s.id === doc.thId)
+        : db.staff[0];
+      const st = targetStaff ?? {
+        id: '',
+        nom: db.cab.pra || t('appDefaultTitle'),
+        role: 'main' as const,
+      };
+      const staffRdvs = db.rdv.filter(
+        (r) =>
+          (st.id === '' ? true : r.th === st.id) &&
+          r.date >= doc.weekStart &&
+          r.date <= weekEnd &&
+          r.statut !== 'absent',
+      );
+      const hasSat = staffRdvs.some((r) => r.date === daysAll[5]);
+      const hasSun = staffRdvs.some((r) => r.date === daysAll[6]);
+      const cols = daysAll.slice(0, 5);
+      if (hasSat) cols.push(daysAll[5]);
+      if (hasSun) cols.push(daysAll[6]);
+
+      const slotTimes = Array.from(new Set(staffRdvs.map((r) => r.heure))).sort();
+      const subtitle = `${t('planningHeader')} : ${st.nom} · ${t('weekRangePrefix')} ${formatDateShort(
+        doc.weekStart,
+        lang,
+      )} ${t('weekRangeTo')} ${formatDateShort(weekEnd, lang)} · ${staffRdvs.length} ${t(
+        'sessionsCount',
+      )}`;
+
+      return (
+        <div className="hidden print-only bg-white text-black">
+          <PrintHeader db={db} docTitle={`${t('planningHeader')} : ${st.nom}`} subtitle={subtitle} />
+
+          <table className="w-full border-collapse text-xs">
+            <thead>
+              <tr className="border-b-2 border-black">
+                <th className="border border-neutral-400 px-2 py-1.5 text-start w-16">
+                  {t('timeLabel')}
+                </th>
+                {cols.map((d) => (
+                  <th key={d} className="border border-neutral-400 px-2 py-1.5 text-start">
+                    {formatDayMonth(d, lang)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {slotTimes.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={cols.length + 1}
+                    className="border border-neutral-300 px-3 py-6 text-center text-neutral-600"
+                  >
+                    {t('noAppointmentsDay')}
+                  </td>
+                </tr>
+              ) : (
+                slotTimes.map((heure) => (
+                  <tr key={heure}>
+                    <td className="border border-neutral-300 px-2 py-1.5 font-semibold tabular-nums align-top">
+                      {heure}
+                    </td>
+                    {cols.map((d) => {
+                      const cellRdvs: Rdv[] = staffRdvs.filter(
+                        (r) => r.date === d && r.heure === heure,
+                      );
+                      return (
+                        <td key={d} className="border border-neutral-300 px-2 py-1.5 align-top">
+                          {cellRdvs.map((r) => {
+                            const pat = db.patients.find((p) => p.id === r.pid);
+                            const endTime = minutesToTime(timeToMinutes(r.heure) + r.dur);
+                            return (
+                              <div
+                                key={r.id}
+                                className={`mb-1 last:mb-0 ${r.kind === 'diag' ? 'italic' : ''}`}
+                              >
+                                <span className="tabular-nums font-medium">
+                                  {r.heure}–{endTime}
+                                </span>{' '}
+                                <span>{pat?.nom ?? ''}</span>
+                                {r.kind === 'diag' && (
+                                  <span className="ms-1 text-[10px] border border-neutral-500 px-1 rounded">
+                                    {t('kind_diag')}
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+
+          <PrintFooter db={db} t={t} />
+        </div>
+      );
+    }
+
+    // All therapists in columns (Jour × Therapists)
+    const weekRdvs = db.rdv.filter(
+      (r) => r.date >= doc.weekStart && r.date <= weekEnd && r.statut !== 'absent',
+    );
+    const staffIds = new Set(db.staff.map((s) => s.id));
+    const hasUnassigned = weekRdvs.some((r) => !r.th || !staffIds.has(r.th));
+    const hasSat = weekRdvs.some((r) => r.date === daysAll[5]);
+    const hasSun = weekRdvs.some((r) => r.date === daysAll[6]);
+    const dayRows = daysAll.slice(0, 5);
+    if (hasSat) dayRows.push(daysAll[5]);
+    if (hasSun) dayRows.push(daysAll[6]);
+
+    const columns = [
+      ...db.staff.map((s) => ({id: s.id, nom: s.nom, specialite: s.specialite ?? '', isUnassigned: false})),
+      ...(hasUnassigned
+        ? [{id: '__unassigned__', nom: t('unassignedCol'), specialite: '', isUnassigned: true}]
+        : []),
+    ];
+
+    const subtitle = `${t('allTherapists')} · ${t('weekRangePrefix')} ${formatDateShort(
+      doc.weekStart,
+      lang,
+    )} ${t('weekRangeTo')} ${formatDateShort(weekEnd, lang)} · ${weekRdvs.length} ${t(
+      'sessionsCount',
+    )}`;
 
     return (
       <div className="hidden print-only bg-white text-black">
-        {staffList.map((st, pageIdx) => {
-          const staffRdvs = db.rdv.filter(
-            (r) =>
-              (st.id === '' ? true : r.th === st.id) &&
-              r.date >= doc.weekStart &&
-              r.date <= weekEnd &&
-              r.statut !== 'absent',
-          );
+        <PrintHeader db={db} docTitle={t('weeklyPlanning')} subtitle={subtitle} />
 
-          const hasSat = staffRdvs.some((r) => r.date === daysAll[5]);
-          const hasSun = staffRdvs.some((r) => r.date === daysAll[6]);
-          const cols = daysAll.slice(0, 5);
-          if (hasSat) cols.push(daysAll[5]);
-          if (hasSun) cols.push(daysAll[6]);
-
-          const slotTimes = Array.from(new Set(staffRdvs.map((r) => r.heure))).sort();
-
-          const subtitle = `${t('planningHeader')} : ${st.nom} · ${t('weekRangePrefix')} ${formatDateShort(
-            doc.weekStart,
-            lang,
-          )} ${t('weekRangeTo')} ${formatDateShort(weekEnd, lang)} · ${staffRdvs.length} ${t(
-            'sessionsCount',
-          )}`;
-
-          return (
-            <div
-              key={st.id || 'default'}
-              className={pageIdx < staffList.length - 1 ? 'print-page-break' : ''}
-            >
-              <PrintHeader db={db} docTitle={`${t('planningHeader')} : ${st.nom}`} subtitle={subtitle} />
-
-              <table className="w-full border-collapse text-xs">
-                <thead>
-                  <tr className="border-b-2 border-black">
-                    <th className="border border-neutral-400 px-2 py-1.5 text-start w-16">
-                      {t('timeLabel')}
-                    </th>
-                    {cols.map((d) => (
-                      <th key={d} className="border border-neutral-400 px-2 py-1.5 text-start">
-                        {formatDayMonth(d, lang)}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {slotTimes.length === 0 ? (
-                    <tr>
-                      <td
-                        colSpan={cols.length + 1}
-                        className="border border-neutral-300 px-3 py-6 text-center text-neutral-600"
-                      >
-                        {t('noAppointmentsDay')}
-                      </td>
-                    </tr>
-                  ) : (
-                    slotTimes.map((heure) => (
-                      <tr key={heure}>
-                        <td className="border border-neutral-300 px-2 py-1.5 font-semibold tabular-nums align-top">
-                          {heure}
-                        </td>
-                        {cols.map((d) => {
-                          const cellRdvs: Rdv[] = staffRdvs.filter(
-                            (r) => r.date === d && r.heure === heure,
-                          );
-                          return (
-                            <td key={d} className="border border-neutral-300 px-2 py-1.5 align-top">
-                              {cellRdvs.map((r) => {
-                                const pat = db.patients.find((p) => p.id === r.pid);
-                                const endTime = minutesToTime(timeToMinutes(r.heure) + r.dur);
-                                return (
-                                  <div
-                                    key={r.id}
-                                    className={`mb-1 last:mb-0 ${r.kind === 'diag' ? 'italic' : ''}`}
-                                  >
-                                    <span className="tabular-nums font-medium">
-                                      {r.heure}–{endTime}
-                                    </span>{' '}
-                                    <span>{pat?.nom ?? ''}</span>
-                                    {r.kind === 'diag' && (
-                                      <span className="ms-1 text-[10px] border border-neutral-500 px-1 rounded">
-                                        {t('kind_diag')}
-                                      </span>
-                                    )}
-                                  </div>
-                                );
-                              })}
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    ))
+        <table className="w-full border-collapse text-xs">
+          <thead>
+            <tr className="border-b-2 border-black">
+              <th className="border border-neutral-400 px-2 py-1.5 text-start w-24">
+                {t('colDate')}
+              </th>
+              {columns.map((col) => (
+                <th key={col.id} className="border border-neutral-400 px-2 py-1.5 text-start">
+                  <div>{col.nom}</div>
+                  {col.specialite && (
+                    <div className="text-[10px] font-normal text-neutral-600">{col.specialite}</div>
                   )}
-                </tbody>
-              </table>
-            </div>
-          );
-        })}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {dayRows.map((d) => (
+              <tr key={d}>
+                <td className="border border-neutral-300 px-2 py-1.5 font-semibold align-top">
+                  {formatDayMonth(d, lang)}
+                </td>
+                {columns.map((col) => {
+                  const cellRdvs = weekRdvs
+                    .filter((r) =>
+                      col.isUnassigned
+                        ? r.date === d && (!r.th || !staffIds.has(r.th))
+                        : r.date === d && r.th === col.id,
+                    )
+                    .sort((a, b) => a.heure.localeCompare(b.heure));
+                  return (
+                    <td key={col.id} className="border border-neutral-300 px-2 py-1.5 align-top">
+                      {cellRdvs.length === 0 ? (
+                        <span className="text-neutral-400">—</span>
+                      ) : (
+                        cellRdvs.map((r) => {
+                          const pat = db.patients.find((p) => p.id === r.pid);
+                          const endTime = minutesToTime(timeToMinutes(r.heure) + r.dur);
+                          return (
+                            <div
+                              key={r.id}
+                              className={`mb-1 last:mb-0 ${r.kind === 'diag' ? 'italic' : ''}`}
+                            >
+                              <span className="tabular-nums font-medium">
+                                {r.heure}–{endTime}
+                              </span>{' '}
+                              <span>{pat?.nom ?? ''}</span>
+                              {r.kind === 'diag' && (
+                                <span className="ms-1 text-[10px] border border-neutral-500 px-1 rounded">
+                                  {t('kind_diag')}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })
+                      )}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+
+        <PrintFooter db={db} t={t} />
       </div>
     );
   }

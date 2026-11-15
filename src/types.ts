@@ -7,6 +7,7 @@ export interface Staff {
   id: string;
   nom: string;
   role: 'main' | 'th';
+  specialite?: string;
 }
 
 export interface Anamnese {
@@ -225,7 +226,7 @@ export type PrintDoc =
   | {kind: 'rdv-report'; rdvId: string}
   | {kind: 'receipt'; rdvId: string}
   | {kind: 'statement'; patientId: string}
-  | {kind: 'planning'; weekStart: string}
+  | {kind: 'planning'; weekStart: string; thId?: string}
   | {
       kind: 'ai-sheet';
       sheet: ExerciseSheet;

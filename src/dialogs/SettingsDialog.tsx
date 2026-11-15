@@ -1,8 +1,8 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {Database, Lock, Sparkles, Trash2, Upload} from 'lucide-react';
 import {Modal} from '../components/Modal';
+import {StaffCrudPanel} from '../components/StaffCrudPanel';
 import type {TranslationKey} from '../i18n';
-import {makeId} from '../storage';
 import type {AiSettings, Cabinet, DB, Staff} from '../types';
 
 interface SettingsDialogProps {
@@ -11,7 +11,13 @@ interface SettingsDialogProps {
   db: DB;
   hasPin: boolean;
   onClose: () => void;
-  onSave: (cab: Cabinet, tarif: number, staff: Staff[], ai: AiSettings) => void;
+  onSave: (
+    cab: Cabinet,
+    tarif: number,
+    staff: Staff[],
+    ai: AiSettings,
+    reassignments: Record<string, string>,
+  ) => void;
   onClearAiLog: () => void;
   onOpenPin: () => void;
   onLoadDemo: () => void;
@@ -76,7 +82,8 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
 }) => {
   const [cab, setCab] = useState<Cabinet>(db.cab);
   const [tarif, setTarif] = useState<number>(db.tarif);
-  const [staffText, setStaffText] = useState<string>('');
+  const [staffDraft, setStaffDraft] = useState<Staff[]>(db.staff);
+  const [reassignments, setReassignments] = useState<Record<string, string>>({});
   const [logoError, setLogoError] = useState<string>('');
 
   const [aiEnabled, setAiEnabled] = useState<boolean>(db.ai.enabled);
@@ -87,7 +94,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
     () => ({
       cab: db.cab,
       tarif: db.tarif,
-      staffText: db.staff.map((s) => s.nom).join('\n'),
+      staff: db.staff,
       aiEnabled: db.ai.enabled,
       aiModel: db.ai.model,
     }),
@@ -98,7 +105,8 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
     if (open) {
       setCab({...db.cab});
       setTarif(db.tarif);
-      setStaffText(db.staff.map((s) => s.nom).join('\n'));
+      setStaffDraft(db.staff.map((s) => ({...s})));
+      setReassignments({});
       setLogoError('');
       setAiEnabled(db.ai.enabled);
       setAiModel(db.ai.model || 'gemini-2.5-flash');
@@ -112,10 +120,10 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
 
   const isDirty = useMemo(() => {
     return (
-      JSON.stringify({cab, tarif, staffText, aiEnabled, aiModel}) !==
-      JSON.stringify(initialSnapshot)
+      JSON.stringify({cab, tarif, staff: staffDraft, aiEnabled, aiModel}) !==
+        JSON.stringify(initialSnapshot) || Object.keys(reassignments).length > 0
     );
-  }, [cab, tarif, staffText, aiEnabled, aiModel, initialSnapshot]);
+  }, [cab, tarif, staffDraft, reassignments, aiEnabled, aiModel, initialSnapshot]);
 
   const handleLogoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -132,24 +140,17 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
 
   const handleSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    const lines = staffText
-      .split('\n')
-      .map((s) => s.trim().slice(0, 200))
-      .filter(Boolean)
-      .slice(0, 20);
-
-    const usedIds = new Set<string>();
-    const nextStaff: Staff[] = lines.map((nom, idx) => {
-      const match = db.staff.find((s) => s.nom === nom && !usedIds.has(s.id));
-      let id = match?.id ?? (db.staff[idx] && !usedIds.has(db.staff[idx].id) ? db.staff[idx].id : makeId('st'));
-      while (usedIds.has(id)) id = makeId('st');
-      usedIds.add(id);
-      return {
-        id,
-        nom,
-        role: idx === 0 ? 'main' : 'th',
-      };
-    });
+    const nextStaff: Staff[] = staffDraft
+      .slice(0, 20)
+      .map(
+        (s, idx): Staff => ({
+          id: s.id,
+          nom: s.nom.trim().slice(0, 200),
+          role: idx === 0 ? 'main' : 'th',
+          ...(s.specialite?.trim() ? {specialite: s.specialite.trim().slice(0, 120)} : {}),
+        }),
+      )
+      .filter((s) => s.nom.length > 0);
 
     const cleanDur = String(Math.min(120, Math.max(10, Math.round(Number(cab.dur) || 30))));
     const cleanTarif = Math.max(0, Math.round(Number(tarif) || 0));
@@ -171,6 +172,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
         enabled: aiEnabled,
         model: aiModel.trim().slice(0, 120) || 'gemini-2.5-flash',
       },
+      reassignments,
     );
   };
 
@@ -296,15 +298,17 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
           </div>
 
           <div className="sm:col-span-2">
-            <label htmlFor="cab-staff" className="block text-sm font-medium mb-1">
-              {t('staffTextareaLabel')}
-            </label>
-            <textarea
-              id="cab-staff"
-              rows={3}
-              value={staffText}
-              onChange={(e) => setStaffText(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm"
+            <div className="text-sm font-medium mb-2">{t('therapistsTitle')}</div>
+            <StaffCrudPanel
+              staff={staffDraft}
+              patients={db.patients}
+              rdv={db.rdv}
+              reassignments={reassignments}
+              onChange={(nextStaff, nextReassign) => {
+                setStaffDraft(nextStaff);
+                setReassignments(nextReassign);
+              }}
+              t={t}
             />
           </div>
 

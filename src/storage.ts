@@ -171,10 +171,12 @@ export function sanitize(raw: unknown, fallbackLang: Lang = 'fr'): DB {
     let id = clampStr(st.id, 100).trim() || makeId('st');
     while (staffIds.has(id)) id = makeId('st');
     staffIds.add(id);
+    const specialite = clampStr(st.specialite, 120).trim();
     staff.push({
       id,
       nom,
       role: staff.length === 0 ? 'main' : 'th',
+      ...(specialite ? {specialite} : {}),
     });
   }
 

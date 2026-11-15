@@ -9,7 +9,9 @@ import {
   addDaysISO,
   formatCurrency,
   formatDateShort,
+  getMondayISO,
   hasOverlap,
+  parseISODateLocal,
   rdvPaidTotal,
   sortPatientsByName,
 } from '../utils';
@@ -21,6 +23,8 @@ export interface RdvSeed {
   pid?: string;
   kind?: RdvKind;
   dur?: number;
+  repeatWeekly?: boolean;
+  weeksCount?: number;
 }
 
 interface RdvDialogProps {
@@ -84,6 +88,9 @@ export const RdvDialog: React.FC<RdvDialogProps> = ({
   const [form, setForm] = useState<Rdv>(initialForm);
   const [repeatWeekly, setRepeatWeekly] = useState(false);
   const [weeksCount, setWeeksCount] = useState(4);
+  const [repeatDays, setRepeatDays] = useState<number[]>(() => [
+    parseISODateLocal(seed?.date ?? todayISO())?.getDay() ?? 1,
+  ]);
   const [newPayAmount, setNewPayAmount] = useState<string>('');
   const [newPayDate, setNewPayDate] = useState<string>(todayISO());
   const [error, setError] = useState('');
@@ -93,8 +100,10 @@ export const RdvDialog: React.FC<RdvDialogProps> = ({
   useEffect(() => {
     if (open) {
       setForm(initialForm);
-      setRepeatWeekly(false);
-      setWeeksCount(4);
+      setRepeatWeekly(Boolean(seed?.repeatWeekly));
+      setWeeksCount(seed?.weeksCount ?? 4);
+      const initialDow = parseISODateLocal(initialForm.date)?.getDay() ?? 1;
+      setRepeatDays([initialDow]);
       const paid = rdvPaidTotal(initialForm);
       const rem = Math.max(0, initialForm.tarif - paid);
       setNewPayAmount(rem > 0 ? String(rem) : '');
@@ -103,11 +112,14 @@ export const RdvDialog: React.FC<RdvDialogProps> = ({
       setConfirmOverlap(false);
       setConfirmDelete(false);
     }
-  }, [open, initialForm]);
+  }, [open, initialForm, seed?.repeatWeekly, seed?.weeksCount]);
 
   const isDirty = useMemo(() => {
-    return JSON.stringify(form) !== JSON.stringify(initialForm) || (isNew && repeatWeekly);
-  }, [form, initialForm, isNew, repeatWeekly]);
+    return (
+      JSON.stringify(form) !== JSON.stringify(initialForm) ||
+      (isNew && repeatWeekly && !seed?.repeatWeekly)
+    );
+  }, [form, initialForm, isNew, repeatWeekly, seed?.repeatWeekly]);
 
   const sortedPatients = useMemo(() => sortPatientsByName(db.patients, lang), [db.patients, lang]);
 
@@ -157,18 +169,33 @@ export const RdvDialog: React.FC<RdvDialogProps> = ({
       return [cleanBase];
     }
     const count = Math.min(52, Math.max(1, Math.round(weeksCount) || 1));
-    const list: Rdv[] = [];
+    const orderedWeekdays = [1, 2, 3, 4, 5, 6, 0];
+    const selectedDays = orderedWeekdays.filter((d) => repeatDays.includes(d));
+    const fallbackDow = parseISODateLocal(cleanBase.date)?.getDay() ?? 1;
+    const activeDays = selectedDays.length > 0 ? selectedDays : [fallbackDow];
+
+    const week0Monday = getMondayISO(cleanBase.date);
+    const dateSet = new Set<string>();
     for (let w = 0; w < count; w++) {
-      list.push({
-        ...cleanBase,
-        id: w === 0 ? cleanBase.id : makeId('rdv'),
-        date: addDaysISO(cleanBase.date, w * 7),
-        pay: w === 0 ? cleanBase.pay : [],
-        rno: w === 0 ? cleanBase.rno : '',
-        rem: '',
-      });
+      for (const dow of activeDays) {
+        const offsetFromMonday = dow === 0 ? 6 : dow - 1;
+        let candidateDate = addDaysISO(week0Monday, w * 7 + offsetFromMonday);
+        if (candidateDate < cleanBase.date) {
+          candidateDate = addDaysISO(candidateDate, count * 7);
+        }
+        dateSet.add(candidateDate);
+      }
     }
-    return list;
+
+    const sortedDates = Array.from(dateSet).sort((a, b) => a.localeCompare(b));
+    return sortedDates.map((d, idx) => ({
+      ...cleanBase,
+      id: idx === 0 ? cleanBase.id : makeId('rdv'),
+      date: d,
+      pay: idx === 0 ? cleanBase.pay : [],
+      rno: idx === 0 ? cleanBase.rno : '',
+      rem: '',
+    }));
   };
 
   const handleAttemptSave = (e?: React.FormEvent) => {
@@ -306,7 +333,16 @@ export const RdvDialog: React.FC<RdvDialogProps> = ({
                 type="date"
                 required
                 value={form.date}
-                onChange={(e) => setForm((prev) => ({...prev, date: e.target.value}))}
+                onChange={(e) => {
+                  const nextDate = e.target.value;
+                  setForm((prev) => ({...prev, date: nextDate}));
+                  if (isNew) {
+                    const parsedDow = parseISODateLocal(nextDate)?.getDay();
+                    if (parsedDow !== undefined) {
+                      setRepeatDays((prev) => (prev.length <= 1 ? [parsedDow] : prev));
+                    }
+                  }
+                }}
                 className="w-full min-h-11 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm tabular-nums"
               />
             </div>
@@ -409,7 +445,7 @@ export const RdvDialog: React.FC<RdvDialogProps> = ({
           </div>
 
           {isNew && (
-            <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 p-3 space-y-2">
+            <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 p-3 space-y-3">
               <label className="flex items-center gap-2.5 text-sm font-medium cursor-pointer">
                 <input
                   type="checkbox"
@@ -420,19 +456,53 @@ export const RdvDialog: React.FC<RdvDialogProps> = ({
                 <span>{t('repeatWeeklyLabel')}</span>
               </label>
               {repeatWeekly && (
-                <div className="flex items-center gap-3 ps-6">
-                  <label htmlFor="rdv-weeks" className="text-sm text-slate-600 dark:text-slate-300">
-                    {t('weeksLabel')}
-                  </label>
-                  <input
-                    id="rdv-weeks"
-                    type="number"
-                    min={1}
-                    max={52}
-                    value={weeksCount}
-                    onChange={(e) => setWeeksCount(Number(e.target.value))}
-                    className="w-24 min-h-10 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-1.5 text-sm tabular-nums"
-                  />
+                <div className="space-y-3 ps-6">
+                  <div>
+                    <span className="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1.5">
+                      {t('repeatDaysLabel')}
+                    </span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {[1, 2, 3, 4, 5, 6, 0].map((dow) => {
+                        const selected = repeatDays.includes(dow);
+                        return (
+                          <button
+                            key={dow}
+                            type="button"
+                            aria-pressed={selected}
+                            onClick={() =>
+                              setRepeatDays((prev) => {
+                                if (prev.includes(dow)) {
+                                  return prev.length > 1 ? prev.filter((d) => d !== dow) : prev;
+                                }
+                                return [...prev, dow];
+                              })
+                            }
+                            className={`min-h-9 min-w-11 rounded-md border px-2.5 py-1 text-xs font-semibold transition-colors ${
+                              selected
+                                ? 'accent-bg border-transparent'
+                                : 'border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                            }`}
+                          >
+                            {t(`dayShort_${dow}` as TranslationKey)}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <label htmlFor="rdv-weeks" className="text-sm text-slate-600 dark:text-slate-300">
+                      {t('weeksLabel')}
+                    </label>
+                    <input
+                      id="rdv-weeks"
+                      type="number"
+                      min={1}
+                      max={52}
+                      value={weeksCount}
+                      onChange={(e) => setWeeksCount(Number(e.target.value))}
+                      className="w-24 min-h-10 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-1.5 text-sm tabular-nums"
+                    />
+                  </div>
                 </div>
               )}
             </div>

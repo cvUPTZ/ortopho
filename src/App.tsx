@@ -29,6 +29,7 @@ import {PatientDialog} from './dialogs/PatientDialog';
 import {PinDialog} from './dialogs/PinDialog';
 import {RdvDialog, type RdvSeed} from './dialogs/RdvDialog';
 import {SettingsDialog} from './dialogs/SettingsDialog';
+import {TherapistsDialog} from './dialogs/TherapistsDialog';
 import {createTranslator} from './i18n';
 import {assignReceiptNumberIfNeeded, triggerBrowserPrint} from './print';
 import {
@@ -119,6 +120,7 @@ export default function App() {
     open: false,
     focusAi: false,
   });
+  const [therapistsOpen, setTherapistsOpen] = useState(false);
   const [aiSheetDlg, setAiSheetDlg] = useState<{open: boolean; patientId: string | null}>({
     open: false,
     patientId: null,
@@ -192,6 +194,7 @@ export default function App() {
       setActivePin(null);
       setDb(createEmptyDB(db.lang));
       setSettingsDlg({open: false, focusAi: false});
+      setTherapistsOpen(false);
       setAiSheetDlg({open: false, patientId: null});
       setAiSessionConsent(false);
       setPinOpen(false);
@@ -463,14 +466,60 @@ export default function App() {
     setPatientDlg({open: false, patientId: null});
   };
 
+  // Staff & Settings helpers
+  const applyStaffUpdate = (
+    baseDb: DB,
+    nextStaff: Staff[],
+    reassignments: Record<string, string>,
+  ): DB => {
+    const cleanStaff: Staff[] = nextStaff.slice(0, 20).map((s, idx) => ({
+      ...s,
+      nom: s.nom.trim().slice(0, 200),
+      role: idx === 0 ? 'main' : 'th',
+      ...(s.specialite?.trim() ? {specialite: s.specialite.trim().slice(0, 120)} : {}),
+    }));
+    const validIds = new Set(cleanStaff.map((s) => s.id));
+    const remapTh = (thId: string): string => {
+      if (!thId) return '';
+      let cur = thId;
+      const seen = new Set<string>();
+      while (cur && reassignments[cur] !== undefined && !seen.has(cur)) {
+        seen.add(cur);
+        cur = reassignments[cur];
+      }
+      return cur && validIds.has(cur) ? cur : '';
+    };
+    return {
+      ...baseDb,
+      staff: cleanStaff,
+      patients: baseDb.patients.map((p) => {
+        const nextTh = remapTh(p.th);
+        return nextTh === p.th ? p : {...p, th: nextTh};
+      }),
+      rdv: baseDb.rdv.map((r) => {
+        const nextTh = remapTh(r.th);
+        return nextTh === r.th ? r : {...r, th: nextTh};
+      }),
+    };
+  };
+
+  const handleSaveTherapists = (nextStaff: Staff[], reassignments: Record<string, string>) => {
+    const updatedDb = applyStaffUpdate(db, nextStaff, reassignments);
+    void commitDB(updatedDb);
+    setTherapistsOpen(false);
+    showToast(t('therapistsSavedToast'));
+  };
+
   // Settings & PIN
   const handleSaveSettings = (
     cab: Cabinet,
     tarif: number,
     staff: Staff[],
     ai: AiSettings,
+    reassignments: Record<string, string> = {},
   ) => {
-    void commitDB({...db, cab, tarif, staff, ai});
+    const updatedDb = applyStaffUpdate({...db, cab, tarif, ai}, staff, reassignments);
+    void commitDB(updatedDb);
     setSettingsDlg({open: false, focusAi: false});
   };
 
@@ -829,9 +878,10 @@ export default function App() {
               }
               onQuickStatus={handleQuickStatus}
               onSendWhatsApp={handleSendWhatsApp}
-              onPrintPlanning={(weekStart) =>
-                triggerPrint({kind: 'planning', weekStart})
+              onPrintPlanning={(weekStart, thId) =>
+                triggerPrint({kind: 'planning', weekStart, thId})
               }
+              onOpenTherapists={() => setTherapistsOpen(true)}
               t={t}
             />
           )}
@@ -995,6 +1045,14 @@ export default function App() {
         onClearAiLog={handleClearAiLog}
         onOpenPin={() => setPinOpen(true)}
         onLoadDemo={requestLoadDemo}
+        t={t}
+      />
+
+      <TherapistsDialog
+        open={therapistsOpen}
+        db={db}
+        onClose={() => setTherapistsOpen(false)}
+        onSave={handleSaveTherapists}
         t={t}
       />
 
