@@ -2,6 +2,7 @@ import React, {useMemo, useState} from 'react';
 import {Calendar, FileText, Lock, Printer, Route, Sparkles, Trash2} from 'lucide-react';
 import {ConfirmDialog} from '../components/ConfirmDialog';
 import {Modal} from '../components/Modal';
+import {TherapistSelectOptions} from '../components/TherapistSelectOptions';
 import {ANAMNESE_FIELDS, BILAN_TYPES, PATHOLOGIES, STAGES_ORDER, type TranslationKey} from '../i18n';
 import {emptyAnamnese, makeId} from '../storage';
 import type {Anamnese, Bilan, DB, Patient, Rdv, Stage} from '../types';
@@ -411,11 +412,7 @@ export const PatientDialog: React.FC<PatientDialogProps> = ({
                   className="w-full min-h-11 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm"
                 >
                   <option value="">{t('unassigned')}</option>
-                  {db.staff.map((st) => (
-                    <option key={st.id} value={st.id}>
-                      {st.nom}
-                    </option>
-                  ))}
+                  <TherapistSelectOptions db={db} t={t} />
                 </select>
               </div>
             </div>

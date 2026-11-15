@@ -1,0 +1,331 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global safety net: default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isVerified() && request.auth.uid == userId;
+    }
+
+    function hasPracticeParent(userId) {
+      return exists(/databases/$(database)/documents/practices/$(userId)) &&
+        get(/databases/$(database)/documents/practices/$(userId)).data.ownerId == request.auth.uid;
+    }
+
+    function patientExists(userId, pid) {
+      return exists(/databases/$(database)/documents/practices/$(userId)/patients/$(pid)) ||
+        existsAfter(/databases/$(database)/documents/practices/$(userId)/patients/$(pid));
+    }
+
+    function isValidCabinet(cab) {
+      return cab is map &&
+        cab.keys().hasAll(['nom', 'pra', 'addr', 'tel', 'legal', 'color', 'logo', 'h1', 'h2', 'dur', 'wamsg']) &&
+        cab.keys().hasOnly(['nom', 'pra', 'addr', 'tel', 'legal', 'color', 'logo', 'h1', 'h2', 'dur', 'wamsg']) &&
+        cab.nom is string && cab.nom.size() <= 200 &&
+        cab.pra is string && cab.pra.size() <= 200 &&
+        cab.addr is string && cab.addr.size() <= 300 &&
+        cab.tel is string && cab.tel.size() <= 200 &&
+        cab.legal is string && cab.legal.size() <= 300 &&
+        cab.color is string && cab.color.size() <= 20 &&
+        cab.logo is string && cab.logo.size() <= 300000 &&
+        cab.h1 is string && cab.h1.size() <= 10 &&
+        cab.h2 is string && cab.h2.size() <= 10 &&
+        cab.dur is string && cab.dur.size() <= 10 &&
+        cab.wamsg is string && cab.wamsg.size() <= 500;
+    }
+
+    function isValidAiSettings(ai) {
+      return ai is map &&
+        ai.keys().hasAll(['enabled', 'model']) &&
+        ai.keys().hasOnly(['enabled', 'model']) &&
+        ai.enabled is bool &&
+        ai.model is string && ai.model.size() >= 1 && ai.model.size() <= 120;
+    }
+
+    function isValidPracticeSettings(data, userId) {
+      return data.keys().hasAll(['ownerId', 'lang', 'tarif', 'cab', 'staff', 'rseq', 'lastBackup', 'ai', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['ownerId', 'lang', 'tarif', 'cab', 'staff', 'rseq', 'lastBackup', 'ai', 'createdAt', 'updatedAt']) &&
+        data.ownerId is string && data.ownerId == userId && data.ownerId == request.auth.uid &&
+        data.lang is string && (data.lang == 'fr' || data.lang == 'ar') &&
+        (data.tarif is int || data.tarif is float) && data.tarif >= 0 && data.tarif <= 1000000 &&
+        isValidCabinet(data.cab) &&
+        data.staff is list && data.staff.size() <= 20 && (data.staff.size() == 0 || data.staff[0] is map) &&
+        data.rseq is int && data.rseq >= 1 && data.rseq <= 9999999 &&
+        (data.lastBackup is int || data.lastBackup is float) && data.lastBackup >= 0 &&
+        isValidAiSettings(data.ai) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidAnamnese(an) {
+      return an is map &&
+        an.keys().hasAll(['gest', 'dev', 'lang', 'scol', 'aud', 'med', 'fam', 'comp', 'att']) &&
+        an.keys().hasOnly(['gest', 'dev', 'lang', 'scol', 'aud', 'med', 'fam', 'comp', 'att']) &&
+        an.gest is string && an.gest.size() <= 3000 &&
+        an.dev is string && an.dev.size() <= 3000 &&
+        an.lang is string && an.lang.size() <= 3000 &&
+        an.scol is string && an.scol.size() <= 3000 &&
+        an.aud is string && an.aud.size() <= 3000 &&
+        an.med is string && an.med.size() <= 3000 &&
+        an.fam is string && an.fam.size() <= 3000 &&
+        an.comp is string && an.comp.size() <= 3000 &&
+        an.att is string && an.att.size() <= 3000;
+    }
+
+    function isValidPatient(data, userId, patientId) {
+      return data.keys().hasAll(['ownerId', 'id', 'nom', 'naissance', 'tel', 'parent', 'medecin', 'patho', 'motif', 'notes', 'stage', 'th', 'an', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['ownerId', 'id', 'nom', 'naissance', 'tel', 'parent', 'medecin', 'patho', 'motif', 'notes', 'stage', 'th', 'an', 'createdAt', 'updatedAt']) &&
+        data.ownerId is string && data.ownerId == userId && data.ownerId == request.auth.uid &&
+        data.id is string && isValidId(data.id) && data.id == patientId &&
+        data.nom is string && data.nom.size() <= 200 &&
+        data.naissance is string && data.naissance.size() <= 20 &&
+        data.tel is string && data.tel.size() <= 200 &&
+        data.parent is string && data.parent.size() <= 200 &&
+        data.medecin is string && data.medecin.size() <= 200 &&
+        data.patho is string && data.patho.size() <= 10 &&
+        data.motif is string && data.motif.size() <= 10000 &&
+        data.notes is string && data.notes.size() <= 10000 &&
+        data.stage is string && data.stage in ['req', 'diag', 'orient', 'suivi', 'clos'] &&
+        data.th is string && data.th.size() <= 100 &&
+        isValidAnamnese(data.an) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidRdv(data, userId, rdvId) {
+      return data.keys().hasAll(['ownerId', 'id', 'pid', 'date', 'heure', 'statut', 'tarif', 'pay', 'note', 'rno', 'kind', 'th', 'dur', 'rem', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['ownerId', 'id', 'pid', 'date', 'heure', 'statut', 'tarif', 'pay', 'note', 'rno', 'kind', 'th', 'dur', 'rem', 'createdAt', 'updatedAt']) &&
+        data.ownerId is string && data.ownerId == userId && data.ownerId == request.auth.uid &&
+        data.id is string && isValidId(data.id) && data.id == rdvId &&
+        data.pid is string && isValidId(data.pid) &&
+        data.date is string && data.date.size() == 10 &&
+        data.heure is string && data.heure.size() == 5 &&
+        data.statut is string && data.statut in ['prevu', 'fait', 'absent'] &&
+        (data.tarif is int || data.tarif is float) && data.tarif >= 0 && data.tarif <= 1000000 &&
+        data.pay is list && data.pay.size() <= 100 && (data.pay.size() == 0 || data.pay[0] is map) &&
+        data.note is string && data.note.size() <= 10000 &&
+        data.rno is string && data.rno.size() <= 50 &&
+        data.kind is string && data.kind in ['diag', 'suivi'] &&
+        data.th is string && data.th.size() <= 100 &&
+        data.dur is int && data.dur >= 5 && data.dur <= 240 &&
+        data.rem is string && data.rem.size() <= 30 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidBilan(data, userId, bilanId) {
+      return data.keys().hasAll(['ownerId', 'id', 'pid', 'date', 'type', 'tests', 'concl', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['ownerId', 'id', 'pid', 'date', 'type', 'tests', 'concl', 'createdAt', 'updatedAt']) &&
+        data.ownerId is string && data.ownerId == userId && data.ownerId == request.auth.uid &&
+        data.id is string && isValidId(data.id) && data.id == bilanId &&
+        data.pid is string && isValidId(data.pid) &&
+        data.date is string && data.date.size() == 10 &&
+        data.type is string && data.type.size() <= 10 &&
+        data.tests is string && data.tests.size() <= 20000 &&
+        data.concl is string && data.concl.size() <= 20000 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidExerciseParams(params) {
+      return params is map &&
+        params.keys().hasAll(['ageBand', 'category', 'target', 'outputLanguage', 'difficulty', 'length', 'routine']) &&
+        params.keys().hasOnly(['ageBand', 'category', 'target', 'outputLanguage', 'difficulty', 'length', 'routine', 'interests', 'specialNote']) &&
+        params.ageBand is string && params.ageBand.size() <= 20 &&
+        params.category is string && params.category.size() <= 40 &&
+        params.target is map &&
+        params.outputLanguage is string && params.outputLanguage.size() <= 40 &&
+        params.difficulty is int && params.difficulty >= 1 && params.difficulty <= 5 &&
+        params.length is string && params.length in ['short', 'standard'] &&
+        params.routine is map;
+    }
+
+    function isValidExerciseSheet(sheet) {
+      return sheet is map &&
+        sheet.keys().hasAll(['title', 'objective', 'parentTips', 'activities', 'routine', 'progressGrid', 'closingNote']) &&
+        sheet.keys().hasOnly(['title', 'objective', 'parentTips', 'activities', 'routine', 'progressGrid', 'closingNote']) &&
+        sheet.title is string && sheet.title.size() <= 500 &&
+        sheet.objective is string && sheet.objective.size() <= 2000 &&
+        sheet.parentTips is list && sheet.parentTips.size() <= 20 &&
+        sheet.activities is list && sheet.activities.size() <= 20 &&
+        sheet.routine is map &&
+        sheet.progressGrid is list && sheet.progressGrid.size() <= 14 &&
+        sheet.closingNote is string && sheet.closingNote.size() <= 2000;
+    }
+
+    function isValidAiSheet(data, userId, sheetId) {
+      return data.keys().hasAll(['ownerId', 'id', 'createdAtMs', 'updatedAtMs', 'params', 'sheet', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['ownerId', 'id', 'createdAtMs', 'updatedAtMs', 'params', 'sheet', 'createdAt', 'updatedAt']) &&
+        data.ownerId is string && data.ownerId == userId && data.ownerId == request.auth.uid &&
+        data.id is string && isValidId(data.id) && data.id == sheetId &&
+        (data.createdAtMs is int || data.createdAtMs is float) && data.createdAtMs >= 0 &&
+        (data.updatedAtMs is int || data.updatedAtMs is float) && data.updatedAtMs >= 0 &&
+        isValidExerciseParams(data.params) &&
+        isValidExerciseSheet(data.sheet) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidAiLog(data, userId, logId) {
+      return data.keys().hasAll(['ownerId', 'id', 'ts', 'model', 'params', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['ownerId', 'id', 'ts', 'model', 'params', 'createdAt', 'updatedAt']) &&
+        data.ownerId is string && data.ownerId == userId && data.ownerId == request.auth.uid &&
+        data.id is string && isValidId(data.id) && data.id == logId &&
+        (data.ts is int || data.ts is float) && data.ts >= 0 &&
+        data.model is string && data.model.size() >= 1 && data.model.size() <= 120 &&
+        isValidExerciseParams(data.params) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    match /practices/{userId} {
+      allow list: if false;
+      allow get: if isValidId(userId) && isOwner(userId);
+      allow create: if isValidId(userId) &&
+        isOwner(userId) &&
+        isValidPracticeSettings(incoming(), userId) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(userId) &&
+        isOwner(userId) &&
+        isValidPracticeSettings(incoming(), userId) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['lang', 'tarif', 'cab', 'staff', 'rseq', 'lastBackup', 'ai', 'updatedAt']);
+      allow delete: if isValidId(userId) && isOwner(userId);
+
+      match /patients/{patientId} {
+        allow list: if isOwner(userId) && resource.data.ownerId == request.auth.uid;
+        allow get: if isValidId(userId) && isValidId(patientId) && isOwner(userId) && hasPracticeParent(userId);
+        allow create: if isValidId(userId) && isValidId(patientId) &&
+          isOwner(userId) &&
+          isValidPatient(incoming(), userId, patientId) &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time &&
+          hasPracticeParent(userId);
+        allow update: if isValidId(userId) && isValidId(patientId) &&
+          isOwner(userId) &&
+          isValidPatient(incoming(), userId, patientId) &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().id == existing().id &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['nom', 'naissance', 'tel', 'parent', 'medecin', 'patho', 'motif', 'notes', 'stage', 'th', 'an', 'updatedAt']) &&
+          hasPracticeParent(userId);
+        allow delete: if isValidId(userId) && isValidId(patientId) && isOwner(userId) && hasPracticeParent(userId);
+      }
+
+      match /rdvs/{rdvId} {
+        allow list: if isOwner(userId) && resource.data.ownerId == request.auth.uid;
+        allow get: if isValidId(userId) && isValidId(rdvId) && isOwner(userId) && hasPracticeParent(userId);
+        allow create: if isValidId(userId) && isValidId(rdvId) &&
+          isOwner(userId) &&
+          isValidRdv(incoming(), userId, rdvId) &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time &&
+          hasPracticeParent(userId) &&
+          patientExists(userId, incoming().pid);
+        allow update: if isValidId(userId) && isValidId(rdvId) &&
+          isOwner(userId) &&
+          isValidRdv(incoming(), userId, rdvId) &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().id == existing().id &&
+          incoming().pid == existing().pid &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['date', 'heure', 'statut', 'tarif', 'pay', 'note', 'rno', 'kind', 'th', 'dur', 'rem', 'updatedAt']) &&
+          hasPracticeParent(userId);
+        allow delete: if isValidId(userId) && isValidId(rdvId) && isOwner(userId) && hasPracticeParent(userId);
+      }
+
+      match /bilans/{bilanId} {
+        allow list: if isOwner(userId) && resource.data.ownerId == request.auth.uid;
+        allow get: if isValidId(userId) && isValidId(bilanId) && isOwner(userId) && hasPracticeParent(userId);
+        allow create: if isValidId(userId) && isValidId(bilanId) &&
+          isOwner(userId) &&
+          isValidBilan(incoming(), userId, bilanId) &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time &&
+          hasPracticeParent(userId) &&
+          patientExists(userId, incoming().pid);
+        allow update: if isValidId(userId) && isValidId(bilanId) &&
+          isOwner(userId) &&
+          isValidBilan(incoming(), userId, bilanId) &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().id == existing().id &&
+          incoming().pid == existing().pid &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['date', 'type', 'tests', 'concl', 'updatedAt']) &&
+          hasPracticeParent(userId);
+        allow delete: if isValidId(userId) && isValidId(bilanId) && isOwner(userId) && hasPracticeParent(userId);
+      }
+
+      match /aiSheets/{sheetId} {
+        allow list: if isOwner(userId) && resource.data.ownerId == request.auth.uid;
+        allow get: if isValidId(userId) && isValidId(sheetId) && isOwner(userId) && hasPracticeParent(userId);
+        allow create: if isValidId(userId) && isValidId(sheetId) &&
+          isOwner(userId) &&
+          isValidAiSheet(incoming(), userId, sheetId) &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time &&
+          hasPracticeParent(userId);
+        allow update: if isValidId(userId) && isValidId(sheetId) &&
+          isOwner(userId) &&
+          isValidAiSheet(incoming(), userId, sheetId) &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().id == existing().id &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['updatedAtMs', 'params', 'sheet', 'updatedAt']) &&
+          hasPracticeParent(userId);
+        allow delete: if isValidId(userId) && isValidId(sheetId) && isOwner(userId) && hasPracticeParent(userId);
+      }
+
+      match /aiLogs/{logId} {
+        allow list: if isOwner(userId) && resource.data.ownerId == request.auth.uid;
+        allow get: if isValidId(userId) && isValidId(logId) && isOwner(userId) && hasPracticeParent(userId);
+        allow create: if isValidId(userId) && isValidId(logId) &&
+          isOwner(userId) &&
+          isValidAiLog(incoming(), userId, logId) &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time &&
+          hasPracticeParent(userId);
+        allow update: if isValidId(userId) && isValidId(logId) &&
+          isOwner(userId) &&
+          isValidAiLog(incoming(), userId, logId) &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().id == existing().id &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['ts', 'model', 'params', 'updatedAt']) &&
+          hasPracticeParent(userId);
+        allow delete: if isValidId(userId) && isValidId(logId) && isOwner(userId) && hasPracticeParent(userId);
+      }
+    }
+  }
+}

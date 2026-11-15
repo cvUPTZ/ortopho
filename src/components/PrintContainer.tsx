@@ -11,6 +11,8 @@ import {
   formatDateShort,
   formatDayMonth,
   getStaffName,
+  getStaffTarif,
+  groupStaffBySpecialite,
   minutesToTime,
   patientFinancials,
   rdvPaidTotal,
@@ -617,10 +619,32 @@ export const PrintContainer: React.FC<PrintContainerProps> = ({db, doc, t}) => {
     if (hasSat) dayRows.push(daysAll[5]);
     if (hasSun) dayRows.push(daysAll[6]);
 
+    const specialtyGroups = groupStaffBySpecialite(db.staff, lang, t('noSpecialtyLabel'));
+    const hasSpecialties = specialtyGroups.some((g) => g.hasSpecialty);
     const columns = [
-      ...db.staff.map((s) => ({id: s.id, nom: s.nom, specialite: s.specialite ?? '', isUnassigned: false})),
+      ...specialtyGroups.flatMap((grp) =>
+        grp.members.map((s) => ({
+          id: s.id,
+          nom: s.nom,
+          specialite: s.specialite ?? '',
+          specKey: grp.key,
+          specLabel: grp.label,
+          tarif: getStaffTarif(db, s.id),
+          isUnassigned: false,
+        })),
+      ),
       ...(hasUnassigned
-        ? [{id: '__unassigned__', nom: t('unassignedCol'), specialite: '', isUnassigned: true}]
+        ? [
+            {
+              id: '__unassigned__',
+              nom: t('unassignedCol'),
+              specialite: '',
+              specKey: '__unassigned__',
+              specLabel: t('unassignedCol'),
+              tarif: null as number | null,
+              isUnassigned: true,
+            },
+          ]
         : []),
     ];
 
@@ -637,15 +661,46 @@ export const PrintContainer: React.FC<PrintContainerProps> = ({db, doc, t}) => {
 
         <table className="w-full border-collapse text-xs">
           <thead>
+            {hasSpecialties && (
+              <tr className="border-b border-neutral-400 bg-neutral-100">
+                <th rowSpan={2} className="border border-neutral-400 px-2 py-1.5 text-start w-24">
+                  {t('colDate')}
+                </th>
+                {(() => {
+                  const spans: {key: string; label: string; count: number}[] = [];
+                  for (const col of columns) {
+                    const last = spans[spans.length - 1];
+                    if (last && last.key === col.specKey) {
+                      last.count += 1;
+                    } else {
+                      spans.push({key: col.specKey, label: col.specLabel, count: 1});
+                    }
+                  }
+                  return spans.map((sp) => (
+                    <th
+                      key={sp.key}
+                      colSpan={sp.count}
+                      className="border border-neutral-400 px-2 py-1 text-start text-[10px] font-bold uppercase"
+                    >
+                      {sp.label}
+                    </th>
+                  ));
+                })()}
+              </tr>
+            )}
             <tr className="border-b-2 border-black">
-              <th className="border border-neutral-400 px-2 py-1.5 text-start w-24">
-                {t('colDate')}
-              </th>
+              {!hasSpecialties && (
+                <th className="border border-neutral-400 px-2 py-1.5 text-start w-24">
+                  {t('colDate')}
+                </th>
+              )}
               {columns.map((col) => (
                 <th key={col.id} className="border border-neutral-400 px-2 py-1.5 text-start">
                   <div>{col.nom}</div>
-                  {col.specialite && (
-                    <div className="text-[10px] font-normal text-neutral-600">{col.specialite}</div>
+                  {col.tarif !== null && (
+                    <div className="text-[10px] font-normal text-neutral-700 tabular-nums">
+                      {formatCurrency(col.tarif, lang)}
+                    </div>
                   )}
                 </th>
               ))}

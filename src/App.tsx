@@ -7,6 +7,8 @@ import {
   GitBranch,
   Languages,
   Lock,
+  LogIn,
+  LogOut,
   Plus,
   Settings,
   Sparkles,
@@ -30,6 +32,19 @@ import {PinDialog} from './dialogs/PinDialog';
 import {RdvDialog, type RdvSeed} from './dialogs/RdvDialog';
 import {SettingsDialog} from './dialogs/SettingsDialog';
 import {TherapistsDialog} from './dialogs/TherapistsDialog';
+import {
+  auth,
+  googleProvider,
+  onAuthStateChanged,
+  signInWithPopup,
+  signOut,
+  type User,
+} from './firebase';
+import {
+  initializePracticeInFirestore,
+  subscribePracticeFromFirestore,
+  syncDbDiffToFirestore,
+} from './firestoreSync';
 import {createTranslator} from './i18n';
 import {assignReceiptNumberIfNeeded, triggerBrowserPrint} from './print';
 import {
@@ -85,6 +100,15 @@ export default function App() {
   const [activePin, setActivePin] = useState<string | null>(null);
   const [storageBlocked, setStorageBlocked] = useState<boolean>(initial.storageBlocked);
   const [saveError, setSaveError] = useState<boolean>(false);
+
+  const [cloudUser, setCloudUser] = useState<User | null>(null);
+  const [authReady, setAuthReady] = useState<boolean>(false);
+  const [cloudError, setCloudError] = useState<string>('');
+  const dbRef = useRef<DB>(db);
+  const lastSyncedDbRef = useRef<DB | null>(null);
+  const syncQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const pendingSyncCountRef = useRef<number>(0);
+  const justSignedInToastRef = useRef<boolean>(false);
 
   const [view, setView] = useState<ViewId>('agenda');
   const [selectedDate, setSelectedDate] = useState<string>(() => todayISO());
@@ -154,17 +178,9 @@ export default function App() {
     document.documentElement.style.setProperty('--accent-fg', contrastForeground(accent));
   }, [isLocked, db.cab.color]);
 
-  const commitDB = useCallback(
-    async (nextDb: DB, pinOverride?: string | null) => {
-      const clean = sanitize(nextDb, nextDb.lang);
-      setDb(clean);
-      const pinToUse = pinOverride !== undefined ? pinOverride : activePin;
-      if (storageBlocked) return;
-      const ok = await saveDB(clean, pinToUse);
-      setSaveError(!ok);
-    },
-    [activePin, storageBlocked],
-  );
+  useEffect(() => {
+    dbRef.current = db;
+  }, [db]);
 
   const showToast = useCallback((message: string, snapshot?: DB, tone: 'info' | 'error' = 'info') => {
     undoSnapshotRef.current = snapshot ? structuredClone(snapshot) : null;
@@ -175,6 +191,144 @@ export default function App() {
       tone,
     });
   }, []);
+
+  const commitDB = useCallback(
+    async (nextDb: DB, pinOverride?: string | null) => {
+      const clean = sanitize(nextDb, nextDb.lang);
+      setDb(clean);
+      dbRef.current = clean;
+      const pinToUse = pinOverride !== undefined ? pinOverride : activePin;
+      if (!storageBlocked) {
+        const ok = await saveDB(clean, pinToUse);
+        setSaveError(!ok);
+      }
+      if (cloudUser && cloudUser.emailVerified && lastSyncedDbRef.current) {
+        const prevSnapshot = lastSyncedDbRef.current;
+        lastSyncedDbRef.current = clean;
+        const uid = cloudUser.uid;
+        pendingSyncCountRef.current += 1;
+        syncQueueRef.current = syncQueueRef.current
+          .then(() => syncDbDiffToFirestore(uid, prevSnapshot, clean))
+          .then(() => {
+            setCloudError('');
+          })
+          .catch((err) => {
+            const msg = err instanceof Error ? err.message : String(err);
+            const isQuota = /quota exceeded/i.test(msg);
+            setCloudError(isQuota ? t('cloudQuotaError') : t('cloudErrorBanner'));
+            showToast(isQuota ? t('cloudQuotaError') : t('cloudErrorBanner'), undefined, 'error');
+          })
+          .finally(() => {
+            pendingSyncCountRef.current = Math.max(0, pendingSyncCountRef.current - 1);
+          });
+      }
+    },
+    [activePin, storageBlocked, cloudUser, showToast, t],
+  );
+
+  // Firebase Auth listener
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (user) => {
+      setAuthReady(true);
+      if (user && !user.emailVerified) {
+        setCloudUser(null);
+        void signOut(auth);
+        return;
+      }
+      setCloudUser(user);
+    });
+    return () => unsub();
+  }, []);
+
+  // Firestore hydration + real-time subscription when signed in and unlocked
+  useEffect(() => {
+    if (!cloudUser || isLocked) {
+      lastSyncedDbRef.current = null;
+      return;
+    }
+
+    let cancelled = false;
+    let unsubFirestore: (() => void) | null = null;
+
+    const startSync = async () => {
+      try {
+        const createdNew = await initializePracticeInFirestore(cloudUser.uid, dbRef.current);
+        if (cancelled) return;
+        if (createdNew) {
+          lastSyncedDbRef.current = dbRef.current;
+        }
+        unsubFirestore = subscribePracticeFromFirestore(
+          cloudUser.uid,
+          dbRef.current.lang,
+          (remoteDb, hasPendingWrites) => {
+            if (cancelled) return;
+            if (lastSyncedDbRef.current === null) {
+              lastSyncedDbRef.current = remoteDb;
+            }
+            if (
+              !hasPendingWrites &&
+              pendingSyncCountRef.current === 0
+            ) {
+              lastSyncedDbRef.current = remoteDb;
+              if (JSON.stringify(remoteDb) !== JSON.stringify(dbRef.current)) {
+                setDb(remoteDb);
+                dbRef.current = remoteDb;
+                if (!storageBlocked) {
+                  void saveDB(remoteDb, activePin);
+                }
+              }
+            }
+            setCloudError('');
+            if (justSignedInToastRef.current) {
+              justSignedInToastRef.current = false;
+              showToast(t('cloudConnectedToast'));
+            }
+          },
+          (err) => {
+            if (cancelled) return;
+            const msg = err instanceof Error ? err.message : String(err);
+            setCloudError(/quota exceeded/i.test(msg) ? t('cloudQuotaError') : t('cloudErrorBanner'));
+          },
+        );
+      } catch (err) {
+        if (cancelled) return;
+        const msg = err instanceof Error ? err.message : String(err);
+        setCloudError(/quota exceeded/i.test(msg) ? t('cloudQuotaError') : t('cloudErrorBanner'));
+      }
+    };
+
+    void startSync();
+
+    return () => {
+      cancelled = true;
+      unsubFirestore?.();
+    };
+  }, [cloudUser, isLocked, activePin, storageBlocked, showToast, t]);
+
+  const handleCloudSignIn = async () => {
+    try {
+      justSignedInToastRef.current = true;
+      const cred = await signInWithPopup(auth, googleProvider);
+      if (!cred.user.emailVerified) {
+        justSignedInToastRef.current = false;
+        showToast(t('cloudUnverifiedError'), undefined, 'error');
+        await signOut(auth);
+      }
+    } catch {
+      justSignedInToastRef.current = false;
+      showToast(t('cloudPopupBlockedError'), undefined, 'error');
+    }
+  };
+
+  const handleCloudSignOut = async () => {
+    try {
+      await signOut(auth);
+      lastSyncedDbRef.current = null;
+      setCloudError('');
+    } catch {
+      // Ignore sign-out errors
+    }
+  };
 
   const handleUndo = useCallback(() => {
     const snap = undoSnapshotRef.current;
@@ -473,10 +627,13 @@ export default function App() {
     reassignments: Record<string, string>,
   ): DB => {
     const cleanStaff: Staff[] = nextStaff.slice(0, 20).map((s, idx) => ({
-      ...s,
+      id: s.id,
       nom: s.nom.trim().slice(0, 200),
       role: idx === 0 ? 'main' : 'th',
       ...(s.specialite?.trim() ? {specialite: s.specialite.trim().slice(0, 120)} : {}),
+      ...(typeof s.tarif === 'number' && Number.isFinite(s.tarif) && s.tarif >= 0
+        ? {tarif: Math.min(1_000_000, Math.round(s.tarif))}
+        : {}),
     }));
     const validIds = new Set(cleanStaff.map((s) => s.id));
     const remapTh = (thId: string): string => {
@@ -770,6 +927,34 @@ export default function App() {
                 </button>
               )}
 
+              {authReady && !cloudUser && (
+                <button
+                  type="button"
+                  onClick={() => void handleCloudSignIn()}
+                  title={t('cloudSignInBtn')}
+                  aria-label={t('cloudSignInBtn')}
+                  className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-800 whitespace-nowrap"
+                >
+                  <LogIn className="h-4 w-4" />
+                  <span className="hidden lg:inline">{t('cloudSignInBtn')}</span>
+                </button>
+              )}
+
+              {cloudUser && (
+                <button
+                  type="button"
+                  onClick={() => void handleCloudSignOut()}
+                  title={`${cloudUser.email ?? ''} — ${t('cloudSignOutBtn')}`}
+                  aria-label={t('cloudSignOutBtn')}
+                  className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-800 whitespace-nowrap"
+                >
+                  <LogOut className="h-4 w-4" />
+                  <span className="hidden lg:inline truncate max-w-[140px]">
+                    {cloudUser.displayName || cloudUser.email || t('cloudSignOutBtn')}
+                  </span>
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={() => setSettingsDlg({open: true, focusAi: false})}
@@ -785,7 +970,30 @@ export default function App() {
 
         {/* System Warning Banners */}
         <div className="mx-auto w-full max-w-7xl px-4 sm:px-6 pt-4 space-y-2 empty:hidden">
-          {storageBlocked && (
+          {authReady && !cloudUser && (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-200 dark:border-blue-900 bg-blue-50 dark:bg-blue-950/40 px-4 py-2.5 text-xs sm:text-sm text-blue-950 dark:text-blue-200">
+              <span>{t('cloudLocalOnlyBanner')}</span>
+              <button
+                type="button"
+                onClick={() => void handleCloudSignIn()}
+                className="inline-flex min-h-9 items-center gap-1.5 rounded-lg accent-bg px-3 py-1.5 text-xs font-semibold whitespace-nowrap"
+              >
+                <LogIn className="h-3.5 w-3.5" />
+                <span>{t('cloudSignInBtn')}</span>
+              </button>
+            </div>
+          )}
+
+          {cloudError && (
+            <div
+              role="alert"
+              className="rounded-xl border border-red-300 dark:border-red-900 bg-red-50 dark:bg-red-950/50 px-4 py-3 text-sm text-red-900 dark:text-red-200"
+            >
+              {cloudError}
+            </div>
+          )}
+
+          {storageBlocked && !cloudUser && (
             <div
               role="alert"
               className="rounded-xl border border-amber-300 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/50 px-4 py-3 text-sm text-amber-950 dark:text-amber-200"

@@ -1,0 +1,306 @@
+{
+  "entities": {
+    "PracticeSettings": {
+      "title": "PracticeSettings",
+      "description": "Speech therapy practice configuration, cabinet details, therapists list, receipt sequence, and AI settings.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the practice owner."
+        },
+        "lang": {
+          "type": "string",
+          "enum": ["fr", "ar"],
+          "description": "Active interface language."
+        },
+        "tarif": {
+          "type": "number",
+          "description": "Default session tariff in DZD."
+        },
+        "cab": {
+          "type": "object",
+          "description": "Cabinet identity, hours, slot duration, accent color, logo, and WhatsApp template."
+        },
+        "staff": {
+          "type": "array",
+          "description": "List of up to 20 therapists with id, nom, role, optional specialite, and optional per-therapist tarif."
+        },
+        "rseq": {
+          "type": "integer",
+          "description": "Next sequential receipt number."
+        },
+        "lastBackup": {
+          "type": "number",
+          "description": "Epoch milliseconds of last manual backup export."
+        },
+        "ai": {
+          "type": "object",
+          "description": "Optional AI exercise generator settings (enabled, model)."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server last update timestamp."
+        }
+      },
+      "required": [
+        "ownerId",
+        "lang",
+        "tarif",
+        "cab",
+        "staff",
+        "rseq",
+        "lastBackup",
+        "ai",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "PatientDoc": {
+      "title": "PatientDoc",
+      "description": "Patient clinical record including identity, pathway stage, assigned therapist, and anamnesis.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "nom": { "type": "string", "maxLength": 200 },
+        "naissance": { "type": "string", "maxLength": 20 },
+        "tel": { "type": "string", "maxLength": 200 },
+        "parent": { "type": "string", "maxLength": 200 },
+        "medecin": { "type": "string", "maxLength": 200 },
+        "patho": { "type": "string", "maxLength": 10 },
+        "motif": { "type": "string", "maxLength": 10000 },
+        "notes": { "type": "string", "maxLength": 10000 },
+        "stage": {
+          "type": "string",
+          "enum": ["req", "diag", "orient", "suivi", "clos"]
+        },
+        "th": { "type": "string", "maxLength": 100 },
+        "an": { "type": "object" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "ownerId",
+        "id",
+        "nom",
+        "naissance",
+        "tel",
+        "parent",
+        "medecin",
+        "patho",
+        "motif",
+        "notes",
+        "stage",
+        "th",
+        "an",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "RdvDoc": {
+      "title": "RdvDoc",
+      "description": "Appointment and session record including status, tariff, payments, notes, and therapist assignment.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "pid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "date": { "type": "string", "maxLength": 10 },
+        "heure": { "type": "string", "maxLength": 5 },
+        "statut": {
+          "type": "string",
+          "enum": ["prevu", "fait", "absent"]
+        },
+        "tarif": { "type": "number" },
+        "pay": { "type": "array" },
+        "note": { "type": "string", "maxLength": 10000 },
+        "rno": { "type": "string", "maxLength": 50 },
+        "kind": {
+          "type": "string",
+          "enum": ["diag", "suivi"]
+        },
+        "th": { "type": "string", "maxLength": 100 },
+        "dur": { "type": "integer" },
+        "rem": { "type": "string", "maxLength": 30 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "ownerId",
+        "id",
+        "pid",
+        "date",
+        "heure",
+        "statut",
+        "tarif",
+        "pay",
+        "note",
+        "rno",
+        "kind",
+        "th",
+        "dur",
+        "rem",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "BilanDoc": {
+      "title": "BilanDoc",
+      "description": "Speech-language clinical assessment record linked to a patient.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "pid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "date": { "type": "string", "maxLength": 10 },
+        "type": { "type": "string", "maxLength": 10 },
+        "tests": { "type": "string", "maxLength": 20000 },
+        "concl": { "type": "string", "maxLength": 20000 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "ownerId",
+        "id",
+        "pid",
+        "date",
+        "type",
+        "tests",
+        "concl",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "SavedExerciseSheetDoc": {
+      "title": "SavedExerciseSheetDoc",
+      "description": "Saved home-practice exercise sheet in the practitioner's personal library.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAtMs": { "type": "number" },
+        "updatedAtMs": { "type": "number" },
+        "params": { "type": "object" },
+        "sheet": { "type": "object" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "ownerId",
+        "id",
+        "createdAtMs",
+        "updatedAtMs",
+        "params",
+        "sheet",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AiSendLogDoc": {
+      "title": "AiSendLogDoc",
+      "description": "Anonymized audit log entry of AI exercise sheet generation parameters.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ts": { "type": "number" },
+        "model": { "type": "string", "maxLength": 120 },
+        "params": { "type": "object" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "ownerId",
+        "id",
+        "ts",
+        "model",
+        "params",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/practices/{userId}": {
+      "schema": { "$ref": "#/entities/PracticeSettings" },
+      "description": "Owner-scoped practice configuration and therapist roster."
+    },
+    "/practices/{userId}/patients/{patientId}": {
+      "schema": { "$ref": "#/entities/PatientDoc" },
+      "description": "Patient records belonging to the practice."
+    },
+    "/practices/{userId}/rdvs/{rdvId}": {
+      "schema": { "$ref": "#/entities/RdvDoc" },
+      "description": "Appointment and payment records belonging to the practice."
+    },
+    "/practices/{userId}/bilans/{bilanId}": {
+      "schema": { "$ref": "#/entities/BilanDoc" },
+      "description": "Clinical assessments belonging to the practice."
+    },
+    "/practices/{userId}/aiSheets/{sheetId}": {
+      "schema": { "$ref": "#/entities/SavedExerciseSheetDoc" },
+      "description": "Saved exercise sheets library belonging to the practice."
+    },
+    "/practices/{userId}/aiLogs/{logId}": {
+      "schema": { "$ref": "#/entities/AiSendLogDoc" },
+      "description": "Anonymized AI parameter send logs belonging to the practice."
+    }
+  }
+}

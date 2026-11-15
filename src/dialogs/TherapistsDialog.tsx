@@ -67,6 +67,8 @@ export const TherapistsDialog: React.FC<TherapistsDialogProps> = ({
         staff={staffDraft}
         patients={db.patients}
         rdv={db.rdv}
+        defaultTarif={db.tarif}
+        lang={db.lang}
         reassignments={reassignments}
         onChange={(nextStaff, nextReassign) => {
           setStaffDraft(nextStaff);

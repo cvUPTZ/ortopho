@@ -2,6 +2,7 @@ import React, {useEffect, useMemo, useState} from 'react';
 import {Plus, Printer, Receipt, Trash2} from 'lucide-react';
 import {ConfirmDialog} from '../components/ConfirmDialog';
 import {Modal} from '../components/Modal';
+import {TherapistSelectOptions} from '../components/TherapistSelectOptions';
 import type {TranslationKey} from '../i18n';
 import {makeId, todayISO} from '../storage';
 import type {DB, Rdv, RdvKind, RdvStatut} from '../types';
@@ -10,6 +11,7 @@ import {
   formatCurrency,
   formatDateShort,
   getMondayISO,
+  getStaffTarif,
   hasOverlap,
   parseISODateLocal,
   rdvPaidTotal,
@@ -68,13 +70,14 @@ export const RdvDialog: React.FC<RdvDialogProps> = ({
     }
     const defaultDur = Number(db.cab.dur) || 30;
     const defaultTh = seed?.th ?? (db.staff.length === 1 ? db.staff[0].id : '');
+    const defaultTarif = getStaffTarif(db, defaultTh);
     return {
       id: makeId('rdv'),
       pid: seed?.pid ?? '',
       date: seed?.date ?? todayISO(),
       heure: seed?.heure ?? '09:00',
       statut: 'prevu',
-      tarif: db.tarif,
+      tarif: defaultTarif,
       pay: [],
       note: '',
       rno: '',
@@ -83,9 +86,10 @@ export const RdvDialog: React.FC<RdvDialogProps> = ({
       dur: seed?.dur ?? defaultDur,
       rem: '',
     };
-  }, [rdv, seed, db.cab.dur, db.staff, db.tarif]);
+  }, [rdv, seed, db]);
 
   const [form, setForm] = useState<Rdv>(initialForm);
+  const [tarifManuallyEdited, setTarifManuallyEdited] = useState(false);
   const [repeatWeekly, setRepeatWeekly] = useState(false);
   const [weeksCount, setWeeksCount] = useState(4);
   const [repeatDays, setRepeatDays] = useState<number[]>(() => [
@@ -100,6 +104,7 @@ export const RdvDialog: React.FC<RdvDialogProps> = ({
   useEffect(() => {
     if (open) {
       setForm(initialForm);
+      setTarifManuallyEdited(false);
       setRepeatWeekly(Boolean(seed?.repeatWeekly));
       setWeeksCount(seed?.weeksCount ?? 4);
       const initialDow = parseISODateLocal(initialForm.date)?.getDay() ?? 1;
@@ -306,11 +311,20 @@ export const RdvDialog: React.FC<RdvDialogProps> = ({
                 onChange={(e) => {
                   const pid = e.target.value;
                   const pat = db.patients.find((p) => p.id === pid);
-                  setForm((prev) => ({
-                    ...prev,
-                    pid,
-                    th: prev.th || pat?.th || '',
-                  }));
+                  setForm((prev) => {
+                    const nextTh = prev.th || pat?.th || '';
+                    const shouldUpdateTarif = isNew && !tarifManuallyEdited && nextTh !== prev.th;
+                    const nextTarif = shouldUpdateTarif ? getStaffTarif(db, nextTh) : prev.tarif;
+                    if (shouldUpdateTarif && prev.pay.length === 0) {
+                      setNewPayAmount(nextTarif > 0 ? String(nextTarif) : '');
+                    }
+                    return {
+                      ...prev,
+                      pid,
+                      th: nextTh,
+                      tarif: nextTarif,
+                    };
+                  });
                   if (error) setError('');
                 }}
                 className="w-full min-h-11 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm"
@@ -386,7 +400,10 @@ export const RdvDialog: React.FC<RdvDialogProps> = ({
                 min={0}
                 step={100}
                 value={form.tarif}
-                onChange={(e) => setForm((prev) => ({...prev, tarif: Number(e.target.value)}))}
+                onChange={(e) => {
+                  setTarifManuallyEdited(true);
+                  setForm((prev) => ({...prev, tarif: Number(e.target.value)}));
+                }}
                 className="w-full min-h-11 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm tabular-nums"
               />
             </div>
@@ -430,15 +447,21 @@ export const RdvDialog: React.FC<RdvDialogProps> = ({
                 <select
                   id="rdv-th"
                   value={form.th}
-                  onChange={(e) => setForm((prev) => ({...prev, th: e.target.value}))}
+                  onChange={(e) => {
+                    const nextTh = e.target.value;
+                    setForm((prev) => {
+                      const shouldUpdateTarif = isNew && !tarifManuallyEdited;
+                      const nextTarif = shouldUpdateTarif ? getStaffTarif(db, nextTh) : prev.tarif;
+                      if (shouldUpdateTarif && prev.pay.length === 0) {
+                        setNewPayAmount(nextTarif > 0 ? String(nextTarif) : '');
+                      }
+                      return {...prev, th: nextTh, tarif: nextTarif};
+                    });
+                  }}
                   className="w-full min-h-11 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm"
                 >
                   <option value="">{t('unassigned')}</option>
-                  {db.staff.map((st) => (
-                    <option key={st.id} value={st.id}>
-                      {st.nom}
-                    </option>
-                  ))}
+                  <TherapistSelectOptions db={db} t={t} />
                 </select>
               </div>
             )}

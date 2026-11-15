@@ -25,6 +25,29 @@ export const PATHOLOGIES: Record<Lang, string[]> = {
   ],
 };
 
+export const SPECIALTY_SUGGESTIONS: Record<Lang, string[]> = {
+  fr: [
+    'Langage oral & Retard de parole',
+    'Articulation & Phonologie',
+    'Fluence & Bégaiement',
+    'Langage écrit (Dyslexie / Dysorthographie)',
+    'Voix & Déglutition',
+    'Logico-mathématiques (Dyscalculie)',
+    'Aphasie & Neurologie adulte',
+    'Communication & TSA',
+  ],
+  ar: [
+    'اللغة الشفهية وتأخر الكلام',
+    'النطق والفونولوجيا',
+    'الطلاقة والتأتأة',
+    'اللغة المكتوبة (عسر القراءة والكتابة)',
+    'الصوت والبلع',
+    'المنطق والرياضيات (عسر الحساب)',
+    'الحبسة والأمراض العصبية',
+    'التواصل وطيف التوحد',
+  ],
+};
+
 export const BILAN_TYPES: Record<Lang, string[]> = {
   fr: [
     'Bilan langagier',
@@ -210,6 +233,12 @@ const fr = {
   therapistNameLabel: 'Nom du thérapeute',
   therapistNamePlaceholder: 'ex. Mme Amira Mansouri',
   therapistSpecialtyPlaceholder: 'Spécialité (optionnel)',
+  therapistTarifLabel: 'Tarif séance (DA)',
+  therapistTarifPlaceholder: 'Tarif (défaut)',
+  defaultTarifHint: 'Défaut',
+  allSpecialties: 'Toutes les spécialités',
+  specialtyLabel: 'Spécialité',
+  noSpecialtyLabel: 'Général / Sans spécialité',
   mainTherapistBadge: 'Principal',
   therapistBadge: 'Thérapeute',
   setMainBtn: 'Définir principal',
@@ -575,6 +604,18 @@ const fr = {
   aiPrintRoutineSummary: 'Rythme conseillé :',
   aiPrintMinPerDay: 'min / jour',
   aiPrintDaysPerWeek: 'jours / semaine',
+
+  // Cloud database & Google Auth
+  cloudSignInBtn: 'Connexion Google',
+  cloudSignOutBtn: 'Déconnexion',
+  cloudLocalOnlyBanner:
+    'Données locales uniquement : connectez-vous avec Google pour enregistrer et synchroniser votre cabinet dans la base de données.',
+  cloudErrorBanner: 'Erreur de synchronisation avec la base de données.',
+  cloudConnectedToast: 'Connecté — données enregistrées dans la base de données.',
+  cloudUnverifiedError:
+    'Votre adresse Google doit être vérifiée pour accéder à la base de données.',
+  cloudPopupBlockedError: 'Connexion annulée ou fenêtre bloquée par le navigateur.',
+  cloudQuotaError: 'Quota Firestore quotidien dépassé. Réessayez demain.',
 };
 
 const ar: typeof fr = {
@@ -693,6 +734,12 @@ const ar: typeof fr = {
   therapistNameLabel: 'اسم المختص',
   therapistNamePlaceholder: 'مثال: أ. أميرة منصوري',
   therapistSpecialtyPlaceholder: 'التخصص (اختياري)',
+  therapistTarifLabel: 'تعريفة الحصة (دج)',
+  therapistTarifPlaceholder: 'التعريفة (الافتراضية)',
+  defaultTarifHint: 'افتراضي',
+  allSpecialties: 'كل التخصصات',
+  specialtyLabel: 'التخصص',
+  noSpecialtyLabel: 'عام / بدون تخصص',
   mainTherapistBadge: 'رئيسي',
   therapistBadge: 'مختص',
   setMainBtn: 'تعيين كرئيسي',
@@ -1058,6 +1105,17 @@ const ar: typeof fr = {
   aiPrintRoutineSummary: 'الوتيرة المقترحة:',
   aiPrintMinPerDay: 'دقيقة / يوم',
   aiPrintDaysPerWeek: 'أيام / أسبوع',
+
+  // Cloud database & Google Auth
+  cloudSignInBtn: 'تسجيل الدخول عبر Google',
+  cloudSignOutBtn: 'تسجيل الخروج',
+  cloudLocalOnlyBanner:
+    'البيانات محفوظة محلياً فقط: سجّل الدخول بحساب Google لحفظ بيانات العيادة ومزامنتها في قاعدة البيانات.',
+  cloudErrorBanner: 'حدث خطأ أثناء المزامنة مع قاعدة البيانات.',
+  cloudConnectedToast: 'تم الاتصال — تم حفظ البيانات في قاعدة البيانات.',
+  cloudUnverifiedError: 'يجب أن يكون بريدك الإلكتروني في Google موثقاً للوصول إلى قاعدة البيانات.',
+  cloudPopupBlockedError: 'تم إلغاء تسجيل الدخول أو حظر النافذة المنبثقة.',
+  cloudQuotaError: 'تم تجاوز الحصة اليومية لـ Firestore. يرجى المحاولة غداً.',
 };
 
 export type TranslationKey = keyof typeof fr;

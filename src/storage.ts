@@ -172,11 +172,20 @@ export function sanitize(raw: unknown, fallbackLang: Lang = 'fr'): DB {
     while (staffIds.has(id)) id = makeId('st');
     staffIds.add(id);
     const specialite = clampStr(st.specialite, 120).trim();
+    const hasTarif =
+      st.tarif !== undefined &&
+      st.tarif !== null &&
+      String(st.tarif).trim() !== '' &&
+      Number.isFinite(Number(st.tarif));
+    const parsedTarif = hasTarif
+      ? Math.min(1_000_000, Math.max(0, Math.round(Number(st.tarif))))
+      : undefined;
     staff.push({
       id,
       nom,
       role: staff.length === 0 ? 'main' : 'th',
       ...(specialite ? {specialite} : {}),
+      ...(parsedTarif !== undefined ? {tarif: parsedTarif} : {}),
     });
   }
 

@@ -1,4 +1,4 @@
-import type {DB, Lang, Patient, Rdv} from './types';
+import type {DB, Lang, Patient, Rdv, Staff} from './types';
 
 export function formatCurrency(amount: number, lang: Lang): string {
   const rounded = Math.round(amount);
@@ -200,6 +200,53 @@ export function hasOverlap(
 export function getStaffName(db: DB, thId: string): string {
   if (!thId) return '';
   return db.staff.find((s) => s.id === thId)?.nom ?? '';
+}
+
+export function getStaffTarif(db: DB, thId: string): number {
+  if (thId) {
+    const st = db.staff.find((s) => s.id === thId);
+    if (st && typeof st.tarif === 'number' && Number.isFinite(st.tarif) && st.tarif >= 0) {
+      return st.tarif;
+    }
+  }
+  return db.tarif;
+}
+
+export interface StaffSpecialtyGroup {
+  key: string;
+  label: string;
+  hasSpecialty: boolean;
+  members: Staff[];
+}
+
+export function groupStaffBySpecialite(
+  staff: Staff[],
+  lang: Lang,
+  unassignedLabel: string,
+): StaffSpecialtyGroup[] {
+  const locale = lang === 'ar' ? 'ar-DZ' : 'fr-FR';
+  const map = new Map<string, StaffSpecialtyGroup>();
+
+  for (const st of staff) {
+    const cleanSpec = st.specialite?.trim() ?? '';
+    const key = cleanSpec ? cleanSpec.toLocaleLowerCase(locale) : '__none__';
+    let group = map.get(key);
+    if (!group) {
+      group = {
+        key,
+        label: cleanSpec || unassignedLabel,
+        hasSpecialty: Boolean(cleanSpec),
+        members: [],
+      };
+      map.set(key, group);
+    }
+    group.members.push(st);
+  }
+
+  return Array.from(map.values()).sort((a, b) => {
+    if (a.hasSpecialty !== b.hasSpecialty) return a.hasSpecialty ? -1 : 1;
+    return a.label.localeCompare(b.label, locale, {sensitivity: 'base'});
+  });
 }
 
 export function getPatientName(db: DB, pid: string): string {

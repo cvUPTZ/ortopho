@@ -1,10 +1,11 @@
 import React, {useEffect, useMemo, useState} from 'react';
 import {ConfirmDialog} from '../components/ConfirmDialog';
 import {Modal} from '../components/Modal';
+import {TherapistSelectOptions} from '../components/TherapistSelectOptions';
 import {PATHOLOGIES, type TranslationKey} from '../i18n';
 import {makeId, todayISO} from '../storage';
 import type {DB, Patient, Rdv} from '../types';
-import {addDaysISO, hasOverlap} from '../utils';
+import {addDaysISO, getStaffTarif, hasOverlap} from '../utils';
 
 interface OrientDialogProps {
   open: boolean;
@@ -33,20 +34,23 @@ export const OrientDialog: React.FC<OrientDialogProps> = ({
   const [dur, setDur] = useState(defaultDur);
   const [weeks, setWeeks] = useState(12);
   const [tarif, setTarif] = useState(db.tarif);
+  const [tarifManuallyEdited, setTarifManuallyEdited] = useState(false);
   const [confirmOverlap, setConfirmOverlap] = useState(false);
 
   useEffect(() => {
     if (open && patient) {
-      setTh(patient.th || db.staff[0]?.id || '');
+      const initialTh = patient.th || db.staff[0]?.id || '';
+      setTh(initialTh);
       setPatho(patient.patho || '');
       setFirstDate(todayISO());
       setHeure('09:00');
       setDur(defaultDur);
       setWeeks(12);
-      setTarif(db.tarif);
+      setTarif(getStaffTarif(db, initialTh));
+      setTarifManuallyEdited(false);
       setConfirmOverlap(false);
     }
-  }, [open, patient, db.staff, defaultDur, db.tarif]);
+  }, [open, patient, db, defaultDur]);
 
   const isDirty = useMemo(() => {
     return open && (weeks !== 12 || heure !== '09:00' || firstDate !== todayISO());
@@ -129,14 +133,16 @@ export const OrientDialog: React.FC<OrientDialogProps> = ({
               <select
                 id="or-th"
                 value={th}
-                onChange={(e) => setTh(e.target.value)}
+                onChange={(e) => {
+                  const nextTh = e.target.value;
+                  setTh(nextTh);
+                  if (!tarifManuallyEdited) {
+                    setTarif(getStaffTarif(db, nextTh));
+                  }
+                }}
                 className="w-full min-h-11 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm"
               >
-                {db.staff.map((st) => (
-                  <option key={st.id} value={st.id}>
-                    {st.nom}
-                  </option>
-                ))}
+                <TherapistSelectOptions db={db} t={t} />
               </select>
             </div>
 
@@ -227,7 +233,10 @@ export const OrientDialog: React.FC<OrientDialogProps> = ({
                 min={0}
                 step={100}
                 value={tarif}
-                onChange={(e) => setTarif(Number(e.target.value))}
+                onChange={(e) => {
+                  setTarifManuallyEdited(true);
+                  setTarif(Number(e.target.value));
+                }}
                 className="w-full min-h-11 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm tabular-nums"
               />
             </div>

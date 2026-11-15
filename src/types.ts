@@ -8,6 +8,7 @@ export interface Staff {
   nom: string;
   role: 'main' | 'th';
   specialite?: string;
+  tarif?: number;
 }
 
 export interface Anamnese {

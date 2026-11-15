@@ -16,8 +16,22 @@ export function generateDemoDB(lang: Lang): DB {
   const tomorrow = addDaysISO(today, 1);
 
   const staff: Staff[] = [
-    {id: 'st_demo_1', nom: 'Mme Samira Benali', role: 'main'},
-    {id: 'st_demo_2', nom: 'M. Karim Haddad', role: 'th'},
+    {
+      id: 'st_demo_1',
+      nom: 'Mme Samira Benali',
+      role: 'main',
+      specialite:
+        lang === 'ar' ? 'اللغة الشفهية والأمراض العصبية' : 'Langage oral & Neurologie',
+      tarif: 2500,
+    },
+    {
+      id: 'st_demo_2',
+      nom: 'M. Karim Haddad',
+      role: 'th',
+      specialite:
+        lang === 'ar' ? 'الطلاقة، النطق والصوت' : 'Fluence, Articulation & Voix',
+      tarif: 2000,
+    },
   ];
 
   const patients: Patient[] = [
@@ -250,7 +264,8 @@ export function generateDemoDB(lang: Lang): DB {
         statut = pastCounter % 7 === 0 ? 'absent' : 'fait';
       }
 
-      const tarif = 2000;
+      const stTarif = staff.find((s) => s.id === sc.th)?.tarif ?? 2000;
+      const tarif = stTarif;
       const pay =
         statut === 'fait'
           ? [{d: date, m: tarif}]

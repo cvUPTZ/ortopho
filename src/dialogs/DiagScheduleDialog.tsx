@@ -1,10 +1,11 @@
 import React, {useEffect, useMemo, useState} from 'react';
 import {ConfirmDialog} from '../components/ConfirmDialog';
 import {Modal} from '../components/Modal';
+import {TherapistSelectOptions} from '../components/TherapistSelectOptions';
 import type {TranslationKey} from '../i18n';
 import {makeId, todayISO} from '../storage';
 import type {DB, Patient, Rdv} from '../types';
-import {hasOverlap} from '../utils';
+import {getStaffTarif, hasOverlap} from '../utils';
 
 interface DiagScheduleDialogProps {
   open: boolean;
@@ -27,17 +28,22 @@ export const DiagScheduleDialog: React.FC<DiagScheduleDialogProps> = ({
   const [date, setDate] = useState(todayISO());
   const [heure, setHeure] = useState('09:00');
   const [dur, setDur] = useState(60);
+  const [tarif, setTarif] = useState(db.tarif);
+  const [tarifManuallyEdited, setTarifManuallyEdited] = useState(false);
   const [confirmOverlap, setConfirmOverlap] = useState(false);
 
   useEffect(() => {
     if (open) {
-      setTh(patient?.th || db.staff[0]?.id || '');
+      const initialTh = patient?.th || db.staff[0]?.id || '';
+      setTh(initialTh);
       setDate(todayISO());
       setHeure('09:00');
       setDur(60);
+      setTarif(getStaffTarif(db, initialTh));
+      setTarifManuallyEdited(false);
       setConfirmOverlap(false);
     }
-  }, [open, patient, db.staff]);
+  }, [open, patient, db]);
 
   const isDirty = useMemo(() => {
     return open && (heure !== '09:00' || dur !== 60 || date !== todayISO());
@@ -51,7 +57,7 @@ export const DiagScheduleDialog: React.FC<DiagScheduleDialogProps> = ({
     date,
     heure,
     statut: 'prevu',
-    tarif: db.tarif,
+    tarif: Math.max(0, Math.round(Number(tarif) || 0)),
     pay: [],
     note: '',
     rno: '',
@@ -107,14 +113,16 @@ export const DiagScheduleDialog: React.FC<DiagScheduleDialogProps> = ({
             <select
               id="diag-th"
               value={th}
-              onChange={(e) => setTh(e.target.value)}
+              onChange={(e) => {
+                const nextTh = e.target.value;
+                setTh(nextTh);
+                if (!tarifManuallyEdited) {
+                  setTarif(getStaffTarif(db, nextTh));
+                }
+              }}
               className="w-full min-h-11 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm"
             >
-              {db.staff.map((st) => (
-                <option key={st.id} value={st.id}>
-                  {st.nom}
-                </option>
-              ))}
+              <TherapistSelectOptions db={db} t={t} />
             </select>
           </div>
 
@@ -147,19 +155,38 @@ export const DiagScheduleDialog: React.FC<DiagScheduleDialogProps> = ({
             </div>
           </div>
 
-          <div>
-            <label htmlFor="diag-dur" className="block text-sm font-medium mb-1">
-              {t('durationMinLabel')}
-            </label>
-            <input
-              id="diag-dur"
-              type="number"
-              min={5}
-              max={240}
-              value={dur}
-              onChange={(e) => setDur(Number(e.target.value))}
-              className="w-full min-h-11 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm tabular-nums"
-            />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label htmlFor="diag-dur" className="block text-sm font-medium mb-1">
+                {t('durationMinLabel')}
+              </label>
+              <input
+                id="diag-dur"
+                type="number"
+                min={5}
+                max={240}
+                value={dur}
+                onChange={(e) => setDur(Number(e.target.value))}
+                className="w-full min-h-11 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm tabular-nums"
+              />
+            </div>
+            <div>
+              <label htmlFor="diag-tarif" className="block text-sm font-medium mb-1">
+                {t('tariffLabel')}
+              </label>
+              <input
+                id="diag-tarif"
+                type="number"
+                min={0}
+                step={100}
+                value={tarif}
+                onChange={(e) => {
+                  setTarifManuallyEdited(true);
+                  setTarif(Number(e.target.value));
+                }}
+                className="w-full min-h-11 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm tabular-nums"
+              />
+            </div>
           </div>
         </form>
       </Modal>

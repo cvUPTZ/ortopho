@@ -24,6 +24,8 @@ import {
   getMondayISO,
   getPatientName,
   getStaffName,
+  getStaffTarif,
+  groupStaffBySpecialite,
   minutesToTime,
   monthCollectedTotal,
   timeToMinutes,
@@ -49,6 +51,9 @@ interface TherapistColumn {
   id: string;
   nom: string;
   specialite: string;
+  specKey: string;
+  specLabel: string;
+  tarif: number | null;
   isUnassigned: boolean;
 }
 
@@ -68,32 +73,61 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
   const tomorrow = addDaysISO(today, 1);
 
   const [mode, setMode] = useState<AgendaMode>('day');
+  const [filterSpec, setFilterSpec] = useState<string>('');
   const [filterTh, setFilterTh] = useState<string>('');
   const [showWeekend, setShowWeekend] = useState<boolean>(false);
 
-  const effectiveFilterTh = db.staff.some((s) => s.id === filterTh) ? filterTh : '';
+  const specialtyGroups = useMemo(
+    () => groupStaffBySpecialite(db.staff, lang, t('noSpecialtyLabel')),
+    [db.staff, lang, t],
+  );
+  const hasSpecialties = useMemo(
+    () => specialtyGroups.some((g) => g.hasSpecialty),
+    [specialtyGroups],
+  );
+  const effectiveFilterSpec = specialtyGroups.some((g) => g.key === filterSpec)
+    ? filterSpec
+    : '';
+
+  const filteredStaff = useMemo(() => {
+    if (!effectiveFilterSpec) return db.staff;
+    const grp = specialtyGroups.find((g) => g.key === effectiveFilterSpec);
+    return grp ? grp.members : db.staff;
+  }, [db.staff, effectiveFilterSpec, specialtyGroups]);
+
+  const filteredStaffIds = useMemo(
+    () => new Set(filteredStaff.map((s) => s.id)),
+    [filteredStaff],
+  );
+
+  const effectiveFilterTh = filteredStaff.some((s) => s.id === filterTh) ? filterTh : '';
   const effectiveMode: AgendaMode = db.staff.length === 0 ? 'day' : mode;
   const currentMonth = today.slice(0, 7);
 
   // Filtered appointments for selected day
   const dayRdvs = useMemo(() => {
     return db.rdv
-      .filter((r) => r.date === selectedDate && (effectiveFilterTh === '' || r.th === effectiveFilterTh))
+      .filter((r) => {
+        if (r.date !== selectedDate) return false;
+        if (effectiveFilterTh !== '') return r.th === effectiveFilterTh;
+        if (effectiveFilterSpec !== '') return filteredStaffIds.has(r.th);
+        return true;
+      })
       .sort((a, b) => a.heure.localeCompare(b.heure));
-  }, [db.rdv, selectedDate, effectiveFilterTh]);
+  }, [db.rdv, selectedDate, effectiveFilterTh, effectiveFilterSpec, filteredStaffIds]);
 
   // Tomorrow reminders (only shown when viewing today)
   const tomorrowReminders = useMemo(() => {
     if (selectedDate !== today) return [];
     return db.rdv
-      .filter(
-        (r) =>
-          r.date === tomorrow &&
-          r.statut === 'prevu' &&
-          (effectiveFilterTh === '' || r.th === effectiveFilterTh),
-      )
+      .filter((r) => {
+        if (r.date !== tomorrow || r.statut !== 'prevu') return false;
+        if (effectiveFilterTh !== '') return r.th === effectiveFilterTh;
+        if (effectiveFilterSpec !== '') return filteredStaffIds.has(r.th);
+        return true;
+      })
       .sort((a, b) => a.heure.localeCompare(b.heure));
-  }, [db.rdv, selectedDate, today, tomorrow, effectiveFilterTh]);
+  }, [db.rdv, selectedDate, today, tomorrow, effectiveFilterTh, effectiveFilterSpec, filteredStaffIds]);
 
   // Summary strip stats
   const daySessionsCount = useMemo(
@@ -157,25 +191,45 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
   // Day view columns when "All therapists" is active and db.staff.length > 0
   const staffIdSet = useMemo(() => new Set(db.staff.map((s) => s.id)), [db.staff]);
 
+  const orderedStaffCols = useMemo<TherapistColumn[]>(() => {
+    const groupsToShow = effectiveFilterSpec
+      ? specialtyGroups.filter((g) => g.key === effectiveFilterSpec)
+      : specialtyGroups;
+    const cols: TherapistColumn[] = [];
+    for (const grp of groupsToShow) {
+      for (const s of grp.members) {
+        cols.push({
+          id: s.id,
+          nom: s.nom,
+          specialite: s.specialite ?? '',
+          specKey: grp.key,
+          specLabel: grp.label,
+          tarif: getStaffTarif(db, s.id),
+          isUnassigned: false,
+        });
+      }
+    }
+    return cols;
+  }, [specialtyGroups, effectiveFilterSpec, db]);
+
   const dayColumns = useMemo<TherapistColumn[]>(() => {
     if (db.staff.length === 0) return [];
-    const cols: TherapistColumn[] = db.staff.map((s) => ({
-      id: s.id,
-      nom: s.nom,
-      specialite: s.specialite ?? '',
-      isUnassigned: false,
-    }));
-    const hasUnassigned = dayRdvs.some((r) => !r.th || !staffIdSet.has(r.th));
+    const cols: TherapistColumn[] = [...orderedStaffCols];
+    const hasUnassigned =
+      effectiveFilterSpec === '' && dayRdvs.some((r) => !r.th || !staffIdSet.has(r.th));
     if (hasUnassigned) {
       cols.push({
         id: '__unassigned__',
         nom: t('unassignedCol'),
         specialite: '',
+        specKey: '__unassigned__',
+        specLabel: t('unassignedCol'),
+        tarif: null,
         isUnassigned: true,
       });
     }
     return cols;
-  }, [db.staff, dayRdvs, staffIdSet, t]);
+  }, [db.staff.length, orderedStaffCols, effectiveFilterSpec, dayRdvs, staffIdSet, t]);
 
   const dayTimeSlots = useMemo<number[]>(() => {
     const set = new Set<number>();
@@ -200,30 +254,32 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
 
   const weekAllRdvs = useMemo(
     () =>
-      db.rdv.filter(
-        (r) => r.date >= weekStart && r.date <= weekEnd && r.statut !== 'absent',
-      ),
-    [db.rdv, weekStart, weekEnd],
+      db.rdv.filter((r) => {
+        if (r.date < weekStart || r.date > weekEnd || r.statut === 'absent') return false;
+        if (effectiveFilterTh !== '') return r.th === effectiveFilterTh;
+        if (effectiveFilterSpec !== '') return filteredStaffIds.has(r.th);
+        return true;
+      }),
+    [db.rdv, weekStart, weekEnd, effectiveFilterTh, effectiveFilterSpec, filteredStaffIds],
   );
 
   const weekColumns = useMemo<TherapistColumn[]>(() => {
-    const cols: TherapistColumn[] = db.staff.map((s) => ({
-      id: s.id,
-      nom: s.nom,
-      specialite: s.specialite ?? '',
-      isUnassigned: false,
-    }));
-    const hasUnassigned = weekAllRdvs.some((r) => !r.th || !staffIdSet.has(r.th));
+    const cols: TherapistColumn[] = [...orderedStaffCols];
+    const hasUnassigned =
+      effectiveFilterSpec === '' && weekAllRdvs.some((r) => !r.th || !staffIdSet.has(r.th));
     if (hasUnassigned) {
       cols.push({
         id: '__unassigned__',
         nom: t('unassignedCol'),
         specialite: '',
+        specKey: '__unassigned__',
+        specLabel: t('unassignedCol'),
+        tarif: null,
         isUnassigned: true,
       });
     }
     return cols;
-  }, [db.staff, weekAllRdvs, staffIdSet, t]);
+  }, [orderedStaffCols, effectiveFilterSpec, weekAllRdvs, staffIdSet, t]);
 
   const weekDayRows = useMemo(() => {
     const hasSat = weekAllRdvs.some((r) => r.date === weekDaysAll[5]);
@@ -287,6 +343,25 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
             <span>{t('manageTherapistsBtn')}</span>
           </button>
 
+          {hasSpecialties && db.staff.length > 0 && (
+            <select
+              aria-label={t('specialtyLabel')}
+              value={effectiveFilterSpec}
+              onChange={(e) => {
+                setFilterSpec(e.target.value);
+                setFilterTh('');
+              }}
+              className="min-h-11 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-sm"
+            >
+              <option value="">{t('allSpecialties')}</option>
+              {specialtyGroups.map((grp) => (
+                <option key={grp.key} value={grp.key}>
+                  {grp.label} ({grp.members.length})
+                </option>
+              ))}
+            </select>
+          )}
+
           {db.staff.length > 0 && (
             <select
               aria-label={t('therapistLabel')}
@@ -295,11 +370,21 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
               className="min-h-11 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-sm"
             >
               <option value="">{t('allTherapists')}</option>
-              {db.staff.map((st) => (
-                <option key={st.id} value={st.id}>
-                  {st.nom}
-                </option>
-              ))}
+              {!effectiveFilterSpec && hasSpecialties
+                ? specialtyGroups.map((grp) => (
+                    <optgroup key={grp.key} label={grp.label}>
+                      {grp.members.map((st) => (
+                        <option key={st.id} value={st.id}>
+                          {st.nom} — {formatCurrency(getStaffTarif(db, st.id), lang)}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))
+                : filteredStaff.map((st) => (
+                    <option key={st.id} value={st.id}>
+                      {st.nom} — {formatCurrency(getStaffTarif(db, st.id), lang)}
+                    </option>
+                  ))}
             </select>
           )}
 
@@ -439,10 +524,42 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
             <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
               <table className="w-full border-collapse text-xs">
                 <thead>
+                  {hasSpecialties && (
+                    <tr className="bg-slate-100/80 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800">
+                      <th
+                        rowSpan={2}
+                        className="sticky start-0 z-10 bg-slate-50 dark:bg-slate-950 px-3 py-2.5 text-start font-semibold w-20 border-e border-slate-200 dark:border-slate-800 align-middle"
+                      >
+                        {t('timeLabel')}
+                      </th>
+                      {(() => {
+                        const spans: {key: string; label: string; count: number}[] = [];
+                        for (const col of dayColumns) {
+                          const last = spans[spans.length - 1];
+                          if (last && last.key === col.specKey) {
+                            last.count += 1;
+                          } else {
+                            spans.push({key: col.specKey, label: col.specLabel, count: 1});
+                          }
+                        }
+                        return spans.map((sp) => (
+                          <th
+                            key={sp.key}
+                            colSpan={sp.count}
+                            className="px-3 py-1.5 text-start text-[11px] font-bold uppercase tracking-wide text-slate-700 dark:text-slate-200 border-e last:border-e-0 border-slate-200 dark:border-slate-800"
+                          >
+                            {sp.label}
+                          </th>
+                        ));
+                      })()}
+                    </tr>
+                  )}
                   <tr className="bg-slate-50 dark:bg-slate-950/70 border-b border-slate-200 dark:border-slate-800">
-                    <th className="sticky start-0 z-10 bg-slate-50 dark:bg-slate-950 px-3 py-2.5 text-start font-semibold w-20 border-e border-slate-200 dark:border-slate-800">
-                      {t('timeLabel')}
-                    </th>
+                    {!hasSpecialties && (
+                      <th className="sticky start-0 z-10 bg-slate-50 dark:bg-slate-950 px-3 py-2.5 text-start font-semibold w-20 border-e border-slate-200 dark:border-slate-800">
+                        {t('timeLabel')}
+                      </th>
+                    )}
                     {dayColumns.map((col) => {
                       const colCount = dayRdvs.filter((r) =>
                         col.isUnassigned
@@ -457,13 +574,15 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0">
                               <div className="text-sm font-bold truncate">{col.nom}</div>
-                              {col.specialite && (
-                                <div className="text-[11px] font-normal text-slate-500 dark:text-slate-400 truncate">
-                                  {col.specialite}
-                                </div>
-                              )}
-                              <div className="text-[11px] font-normal text-slate-500 dark:text-slate-400 tabular-nums mt-0.5">
-                                {colCount} {colCount === 1 ? t('sessionSingular') : t('sessionsCount')}
+                              <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-normal text-slate-500 dark:text-slate-400 tabular-nums mt-0.5">
+                                {col.tarif !== null && (
+                                  <span className="rounded bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-900 px-1.5 py-0.5 font-semibold">
+                                    {formatCurrency(col.tarif, lang)}
+                                  </span>
+                                )}
+                                <span>
+                                  {colCount} {colCount === 1 ? t('sessionSingular') : t('sessionsCount')}
+                                </span>
                               </div>
                             </div>
                             {!col.isUnassigned && (
@@ -850,10 +969,42 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
               <div className="overflow-x-auto">
                 <table className="w-full border-collapse text-xs">
                   <thead>
+                    {hasSpecialties && (
+                      <tr className="bg-slate-100/80 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800">
+                        <th
+                          rowSpan={2}
+                          className="sticky start-0 z-10 bg-slate-50 dark:bg-slate-950 px-3 py-2.5 text-start font-semibold w-32 border-e border-slate-200 dark:border-slate-800 align-middle"
+                        >
+                          {t('colDate')}
+                        </th>
+                        {(() => {
+                          const spans: {key: string; label: string; count: number}[] = [];
+                          for (const col of weekColumns) {
+                            const last = spans[spans.length - 1];
+                            if (last && last.key === col.specKey) {
+                              last.count += 1;
+                            } else {
+                              spans.push({key: col.specKey, label: col.specLabel, count: 1});
+                            }
+                          }
+                          return spans.map((sp) => (
+                            <th
+                              key={sp.key}
+                              colSpan={sp.count}
+                              className="px-3 py-1.5 text-start text-[11px] font-bold uppercase tracking-wide text-slate-700 dark:text-slate-200 border-e last:border-e-0 border-slate-200 dark:border-slate-800"
+                            >
+                              {sp.label}
+                            </th>
+                          ));
+                        })()}
+                      </tr>
+                    )}
                     <tr className="bg-slate-50 dark:bg-slate-950/70 border-b border-slate-200 dark:border-slate-800">
-                      <th className="sticky start-0 z-10 bg-slate-50 dark:bg-slate-950 px-3 py-2.5 text-start font-semibold w-32 border-e border-slate-200 dark:border-slate-800">
-                        {t('colDate')}
-                      </th>
+                      {!hasSpecialties && (
+                        <th className="sticky start-0 z-10 bg-slate-50 dark:bg-slate-950 px-3 py-2.5 text-start font-semibold w-32 border-e border-slate-200 dark:border-slate-800">
+                          {t('colDate')}
+                        </th>
+                      )}
                       {weekColumns.map((col) => {
                         const colTotal = weekAllRdvs.filter((r) =>
                           col.isUnassigned ? !r.th || !staffIdSet.has(r.th) : r.th === col.id,
@@ -866,8 +1017,12 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
                             <div className="space-y-1.5">
                               <div>
                                 <div className="text-sm font-bold truncate">{col.nom}</div>
-                                <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-normal text-slate-500 dark:text-slate-400 tabular-nums">
-                                  {col.specialite && <span>{col.specialite} ·</span>}
+                                <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-normal text-slate-500 dark:text-slate-400 tabular-nums mt-0.5">
+                                  {col.tarif !== null && (
+                                    <span className="rounded bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-900 px-1.5 py-0.5 font-semibold">
+                                      {formatCurrency(col.tarif, lang)}
+                                    </span>
+                                  )}
                                   <span>
                                     {colTotal} {t('sessionsCount')}
                                   </span>
@@ -989,10 +1144,16 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
                       <h2 className="text-base font-bold">
                         {t('planningHeader')} : {selectedStaff.nom}
                       </h2>
-                      <div className="text-xs text-slate-500 dark:text-slate-400 tabular-nums">
-                        {selectedStaff.specialite ? `${selectedStaff.specialite} · ` : ''}
-                        {t('weekRangePrefix')} {formatDateShort(weekStart, lang)} {t('weekRangeTo')}{' '}
-                        {formatDateShort(weekEnd, lang)} · {staffRdvs.length} {t('sessionsCount')}
+                      <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 tabular-nums mt-0.5">
+                        {selectedStaff.specialite && <span>{selectedStaff.specialite} ·</span>}
+                        <span className="rounded bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-900 px-1.5 py-0.5 font-semibold">
+                          {formatCurrency(getStaffTarif(db, selectedStaff.id), lang)}
+                        </span>
+                        <span>·</span>
+                        <span>
+                          {t('weekRangePrefix')} {formatDateShort(weekStart, lang)} {t('weekRangeTo')}{' '}
+                          {formatDateShort(weekEnd, lang)} · {staffRdvs.length} {t('sessionsCount')}
+                        </span>
                       </div>
                     </div>
 

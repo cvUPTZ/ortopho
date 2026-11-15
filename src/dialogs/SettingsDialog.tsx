@@ -148,6 +148,9 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
           nom: s.nom.trim().slice(0, 200),
           role: idx === 0 ? 'main' : 'th',
           ...(s.specialite?.trim() ? {specialite: s.specialite.trim().slice(0, 120)} : {}),
+          ...(typeof s.tarif === 'number' && Number.isFinite(s.tarif) && s.tarif >= 0
+            ? {tarif: Math.min(1_000_000, Math.round(s.tarif))}
+            : {}),
         }),
       )
       .filter((s) => s.nom.length > 0);
@@ -303,6 +306,8 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
               staff={staffDraft}
               patients={db.patients}
               rdv={db.rdv}
+              defaultTarif={Math.max(0, Math.round(Number(tarif) || 0))}
+              lang={db.lang}
               reassignments={reassignments}
               onChange={(nextStaff, nextReassign) => {
                 setStaffDraft(nextStaff);
