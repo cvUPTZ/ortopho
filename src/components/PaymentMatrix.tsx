@@ -17,6 +17,7 @@ import type {TranslationKey} from '../i18n';
 import type {BillingMode, DB, Patient, Rdv} from '../types';
 import {
   formatCurrency,
+  formatDateShort,
   formatMonthShort,
   getDomainById,
   getStaffDomain,
@@ -41,18 +42,23 @@ interface PaymentMatrixProps {
   onOpenRdv: (rdv: Rdv) => void;
   onPrintStatement: (patientId: string) => void;
   onQuickMarkRdvsPaid: (rdvIds: string[], toastMsg: string) => void;
+  onOpenVersement: (patient: Patient, scopeLabel: string, rdvIds: string[]) => void;
   t: (key: TranslationKey) => string;
 }
 
 interface MonthAggregate {
   ym: string;
   billed: number;
+  plannedTarif: number;
   paid: number;
   remaining: number;
   doneCount: number;
   plannedCount: number;
   absentCount: number;
   totalCount: number;
+  versementCount: number;
+  lastVersementDate: string;
+  sessionIds: string[];
   unpaidSessionIds: string[];
   tone: CellTone | 'empty';
 }
@@ -62,10 +68,13 @@ interface PatientMatrixRow {
   billingMode: BillingMode;
   subtitle: string;
   sessions: Rdv[];
+  sessionIds: string[];
   months: MonthAggregate[];
   billed: number;
   paid: number;
   remaining: number;
+  versementCount: number;
+  lastVersementDate: string;
   unpaidSessionIds: string[];
   rowTone: CellTone;
 }
@@ -135,6 +144,7 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
   onOpenRdv,
   onPrintStatement,
   onQuickMarkRdvsPaid,
+  onOpenVersement,
   t,
 }) => {
   const lang = db.lang;
@@ -207,14 +217,22 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
       if (sessions.length === 0) continue;
 
       let billed = 0;
+      let plannedTarifRow = 0;
       let paid = 0;
+      let versementCount = 0;
+      let lastVersementDate = '';
       const unpaidSessionIds: string[] = [];
 
       for (const s of sessions) {
         const b = rdvBilledAmount(s);
         const p = rdvPaidTotal(s);
         billed += b;
+        if (s.statut === 'prevu') plannedTarifRow += s.tarif;
         paid += p;
+        versementCount += s.pay.length;
+        for (const entry of s.pay) {
+          if (entry.d > lastVersementDate) lastVersementDate = entry.d;
+        }
         if (s.statut === 'fait' && p < s.tarif) {
           unpaidSessionIds.push(s.id);
         }
@@ -228,7 +246,13 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
         else if (remaining < 0) rowTone = 'credit';
         else rowTone = 'paid';
       } else if (paid > 0) {
-        rowTone = 'credit';
+        if (plannedTarifRow > 0) {
+          if (paid > plannedTarifRow) rowTone = 'credit';
+          else if (paid === plannedTarifRow) rowTone = 'paid';
+          else rowTone = 'partial';
+        } else {
+          rowTone = 'credit';
+        }
       } else if (sessions.every((s) => s.statut === 'absent')) {
         rowTone = 'absent';
       }
@@ -241,31 +265,43 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
                 return {
                   ym,
                   billed: 0,
+                  plannedTarif: 0,
                   paid: 0,
                   remaining: 0,
                   doneCount: 0,
                   plannedCount: 0,
                   absentCount: 0,
                   totalCount: 0,
+                  versementCount: 0,
+                  lastVersementDate: '',
+                  sessionIds: [],
                   unpaidSessionIds: [],
                   tone: 'empty',
                 };
               }
               let mBilled = 0;
+              let mPlannedTarif = 0;
               let mPaid = 0;
               let doneCount = 0;
               let plannedCount = 0;
               let absentCount = 0;
+              let mVersementCount = 0;
+              let mLastVersDate = '';
               const mUnpaidIds: string[] = [];
               for (const ms of mSessions) {
                 const p = rdvPaidTotal(ms);
                 mBilled += rdvBilledAmount(ms);
                 mPaid += p;
+                mVersementCount += ms.pay.length;
+                for (const entry of ms.pay) {
+                  if (entry.d > mLastVersDate) mLastVersDate = entry.d;
+                }
                 if (ms.statut === 'fait') {
                   doneCount++;
                   if (p < ms.tarif) mUnpaidIds.push(ms.id);
                 } else if (ms.statut === 'prevu') {
                   plannedCount++;
+                  mPlannedTarif += ms.tarif;
                 } else {
                   absentCount++;
                 }
@@ -278,19 +314,29 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
                 else if (mRem < 0) tone = 'credit';
                 else tone = 'paid';
               } else if (mPaid > 0) {
-                tone = 'credit';
+                if (mPlannedTarif > 0) {
+                  if (mPaid > mPlannedTarif) tone = 'credit';
+                  else if (mPaid === mPlannedTarif) tone = 'paid';
+                  else tone = 'partial';
+                } else {
+                  tone = 'credit';
+                }
               } else if (plannedCount === 0 && absentCount > 0) {
                 tone = 'absent';
               }
               return {
                 ym,
                 billed: mBilled,
+                plannedTarif: mPlannedTarif,
                 paid: mPaid,
                 remaining: mRem,
                 doneCount,
                 plannedCount,
                 absentCount,
                 totalCount: mSessions.length,
+                versementCount: mVersementCount,
+                lastVersementDate: mLastVersDate,
+                sessionIds: mSessions.map((ms) => ms.id),
                 unpaidSessionIds: mUnpaidIds,
                 tone,
               };
@@ -311,10 +357,13 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
         billingMode,
         subtitle: subtitleParts.slice(0, 3).join(' · '),
         sessions,
+        sessionIds: sessions.map((s) => s.id),
         months,
         billed,
         paid,
         remaining,
+        versementCount,
+        lastVersementDate,
         unpaidSessionIds,
         rowTone,
       });
@@ -414,9 +463,11 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
   const columnTotals = useMemo(() => {
     let totalBilled = 0;
     let totalPaid = 0;
+    let totalVersements = 0;
     for (const r of visibleRows) {
       totalBilled += r.billed;
       totalPaid += r.paid;
+      totalVersements += r.versementCount;
     }
     const totalRemaining = totalBilled - totalPaid;
 
@@ -432,7 +483,14 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
         }
         return {billed: colBilled, paid: colPaid};
       });
-      return {totalBilled, totalPaid, totalRemaining, sessionCols: cols, monthCols: []};
+      return {
+        totalBilled,
+        totalPaid,
+        totalRemaining,
+        totalVersements,
+        sessionCols: cols,
+        monthCols: [],
+      };
     }
 
     const monthCols = monthKeys.map((ym, idx) => {
@@ -446,7 +504,7 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
       }
       return {ym, billed: colBilled, paid: colPaid};
     });
-    return {totalBilled, totalPaid, totalRemaining, sessionCols: [], monthCols};
+    return {totalBilled, totalPaid, totalRemaining, totalVersements, sessionCols: [], monthCols};
   }, [visibleRows, mode, maxSessionCols, monthKeys]);
 
   const handleExportCsv = () => {
@@ -471,6 +529,8 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
       ...dynamicHeaders,
       t('totalBilled'),
       t('totalCollected'),
+      t('matrixColVersements'),
+      t('versementLastLabel'),
       t('colRemaining'),
       t('matrixColStatus'),
     ];
@@ -496,6 +556,8 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
         ...cells,
         row.billed,
         row.paid,
+        row.versementCount,
+        row.lastVersementDate,
         row.remaining,
         getToneLabel(row.rowTone),
       ];
@@ -846,9 +908,12 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
                       {t('totalBilled')}
                     </th>
                     <th className="min-w-[96px] px-3 py-2.5 text-end">{t('colPaid')}</th>
+                    <th className="min-w-[116px] px-3 py-2.5 text-start">
+                      {t('matrixColVersements')}
+                    </th>
                     <th className="min-w-[104px] px-3 py-2.5 text-end">{t('colRemaining')}</th>
-                    <th className="min-w-[112px] px-3 py-2.5 text-start">{t('matrixColStatus')}</th>
-                    <th className="min-w-[136px] px-3 py-2.5 text-end">{t('colActions')}</th>
+                    <th className="min-w-[108px] px-3 py-2.5 text-start">{t('matrixColStatus')}</th>
+                    <th className="min-w-[176px] px-3 py-2.5 text-end">{t('colActions')}</th>
                   </tr>
                 </thead>
 
@@ -894,6 +959,11 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
                             const paid = rdvPaidTotal(s);
                             const dom = getDomainById(db.domains, resolveDomainId(s));
                             const canQuickPay = s.statut === 'fait' && paid < s.tarif;
+                            const lastPayDate = s.pay.reduce(
+                              (acc, entry) => (entry.d > acc ? entry.d : acc),
+                              '',
+                            );
+                            const sessionScopeLabel = `${t('versementScopeSession')} · ${formatDateShort(s.date, lang)} ${s.heure}`;
 
                             return (
                               <td
@@ -931,19 +1001,39 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
                                             ? formatCurrency(paid, lang)
                                             : formatCurrency(s.tarif, lang)}
                                     </div>
+
+                                    {s.pay.length > 0 && (
+                                      <div className="mt-0.5 text-[10px] opacity-80 tabular-nums truncate">
+                                        {s.pay.length} {t('versementCountShort')}
+                                        {lastPayDate ? ` · ${formatDayMonthNumeric(lastPayDate)}` : ''}
+                                      </div>
+                                    )}
                                   </button>
 
-                                  {canQuickPay && (
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        onQuickMarkRdvsPaid([s.id], t('matrixSessionPaidToast'))
-                                      }
-                                      className="mt-1.5 inline-flex w-full items-center justify-center gap-1 rounded border border-current/25 bg-white/80 dark:bg-slate-900/70 px-1.5 py-0.5 text-[11px] font-semibold hover:bg-white dark:hover:bg-slate-900 transition-colors"
-                                    >
-                                      <Check className="h-3 w-3" />
-                                      <span>{t('matrixQuickPayBtn')}</span>
-                                    </button>
+                                  {s.statut !== 'absent' && (
+                                    <div className="mt-1.5 flex items-center gap-1">
+                                      {canQuickPay && (
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            onQuickMarkRdvsPaid([s.id], t('matrixSessionPaidToast'))
+                                          }
+                                          className="inline-flex flex-1 items-center justify-center gap-1 rounded border border-current/25 bg-white/80 dark:bg-slate-900/70 px-1.5 py-0.5 text-[11px] font-semibold hover:bg-white dark:hover:bg-slate-900 transition-colors whitespace-nowrap"
+                                        >
+                                          <Check className="h-3 w-3" />
+                                          <span>{t('matrixQuickPayBtn')}</span>
+                                        </button>
+                                      )}
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          onOpenVersement(row.patient, sessionScopeLabel, [s.id])
+                                        }
+                                        className="inline-flex flex-1 items-center justify-center rounded border border-current/25 bg-white/60 dark:bg-slate-900/50 px-1.5 py-0.5 text-[11px] font-medium hover:bg-white dark:hover:bg-slate-900 transition-colors whitespace-nowrap"
+                                      >
+                                        <span>{t('versementShortBtn')}</span>
+                                      </button>
+                                    </div>
                                   )}
                                 </div>
                               </td>
@@ -961,6 +1051,7 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
                               );
                             }
                             const canQuickPayMonth = m.unpaidSessionIds.length > 0 && m.remaining > 0;
+                            const monthScopeLabel = `${t('versementScopeMonth')} · ${formatMonthShort(m.ym, lang)} ${m.ym.slice(0, 4)}`;
                             return (
                               <td
                                 key={m.ym}
@@ -988,36 +1079,63 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
                                       </span>
                                     </div>
                                     <div className="mt-1 text-[11px] tabular-nums font-medium">
-                                      {m.tone === 'partial'
-                                        ? `${formatCurrency(m.paid, lang)}/${formatCurrency(m.billed, lang)}`
-                                        : m.billed > 0
-                                          ? formatCurrency(
+                                      {m.billed > 0
+                                        ? m.tone === 'partial'
+                                          ? `${formatCurrency(m.paid, lang)}/${formatCurrency(m.billed, lang)}`
+                                          : formatCurrency(
                                               m.tone === 'unpaid' ? m.billed : m.paid,
                                               lang,
                                             )
+                                        : m.paid > 0
+                                          ? m.tone === 'partial' && m.plannedTarif > 0
+                                            ? `${formatCurrency(m.paid, lang)}/${formatCurrency(m.plannedTarif, lang)}`
+                                            : formatCurrency(m.paid, lang)
                                           : `${m.totalCount} ${
                                               m.totalCount > 1
                                                 ? t('sessionsCount')
                                                 : t('sessionSingular')
                                             }`}
                                     </div>
+                                    {m.versementCount > 0 && (
+                                      <div className="mt-0.5 text-[10px] opacity-80 tabular-nums truncate">
+                                        {m.versementCount} {t('versementCountShort')}
+                                        {m.lastVersementDate
+                                          ? ` · ${formatDayMonthNumeric(m.lastVersementDate)}`
+                                          : ''}
+                                      </div>
+                                    )}
                                   </button>
 
-                                  {canQuickPayMonth && (
+                                  <div className="mt-1.5 flex items-center gap-1">
+                                    {canQuickPayMonth && (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          onQuickMarkRdvsPaid(
+                                            m.unpaidSessionIds,
+                                            t('matrixSettledToast'),
+                                          )
+                                        }
+                                        className="inline-flex flex-1 items-center justify-center gap-1 rounded border border-current/25 bg-white/80 dark:bg-slate-900/70 px-1.5 py-0.5 text-[11px] font-semibold hover:bg-white dark:hover:bg-slate-900 transition-colors whitespace-nowrap"
+                                      >
+                                        <Check className="h-3 w-3" />
+                                        <span>{t('matrixQuickPayBtn')}</span>
+                                      </button>
+                                    )}
                                     <button
                                       type="button"
                                       onClick={() =>
-                                        onQuickMarkRdvsPaid(
-                                          m.unpaidSessionIds,
-                                          t('matrixSettledToast'),
+                                        onOpenVersement(
+                                          row.patient,
+                                          monthScopeLabel,
+                                          m.sessionIds,
                                         )
                                       }
-                                      className="mt-1.5 inline-flex w-full items-center justify-center gap-1 rounded border border-current/25 bg-white/80 dark:bg-slate-900/70 px-1.5 py-0.5 text-[11px] font-semibold hover:bg-white dark:hover:bg-slate-900 transition-colors"
+                                      className="inline-flex flex-1 items-center justify-center rounded border border-current/25 bg-white/60 dark:bg-slate-900/50 px-1.5 py-0.5 text-[11px] font-medium hover:bg-white dark:hover:bg-slate-900 transition-colors whitespace-nowrap"
                                     >
-                                      <Check className="h-3 w-3" />
-                                      <span>{t('matrixQuickPayBtn')}</span>
+                                      <span>{t('versementShortBtn')}</span>
                                     </button>
-                                  )}
+                                  </div>
                                 </div>
                               </td>
                             );
@@ -1030,6 +1148,39 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
 
                       <td className="px-3 py-2.5 text-end tabular-nums whitespace-nowrap font-semibold text-emerald-700 dark:text-emerald-400">
                         {formatCurrency(row.paid, lang)}
+                      </td>
+
+                      <td className="px-3 py-2.5 whitespace-nowrap">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onOpenVersement(
+                              row.patient,
+                              mode === 'sessions'
+                                ? `${t('versementScopeMonth')} · ${formatMonthShort(month, lang)} ${month.slice(0, 4)}`
+                                : `${t('versementScopePeriod')} · ${year}`,
+                              row.sessionIds,
+                            )
+                          }
+                          className="text-start hover:underline focus-visible:outline-2"
+                        >
+                          {row.versementCount > 0 ? (
+                            <div>
+                              <div className="text-xs font-semibold tabular-nums text-slate-800 dark:text-slate-200">
+                                {row.versementCount} {t('versementCountShort')}
+                              </div>
+                              {row.lastVersementDate && (
+                                <div className="text-[11px] tabular-nums text-slate-500 dark:text-slate-400">
+                                  {formatDateShort(row.lastVersementDate, lang)}
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                              {t('versementShortBtn')}
+                            </span>
+                          )}
+                        </button>
                       </td>
 
                       <td className="px-3 py-2.5 text-end tabular-nums whitespace-nowrap font-bold">
@@ -1067,6 +1218,21 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
 
                       <td className="px-3 py-2.5 text-end whitespace-nowrap">
                         <div className="inline-flex items-center justify-end gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              onOpenVersement(
+                                row.patient,
+                                mode === 'sessions'
+                                  ? `${t('versementScopeMonth')} · ${formatMonthShort(month, lang)} ${month.slice(0, 4)}`
+                                  : `${t('versementScopePeriod')} · ${year}`,
+                                row.sessionIds,
+                              )
+                            }
+                            className="inline-flex min-h-8 items-center rounded-md border border-slate-200 dark:border-slate-700 px-2.5 py-1 text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 whitespace-nowrap"
+                          >
+                            {t('versementBtn')}
+                          </button>
                           {row.unpaidSessionIds.length > 0 && row.remaining > 0 && (
                             <button
                               type="button"
@@ -1145,6 +1311,9 @@ export const PaymentMatrix: React.FC<PaymentMatrixProps> = ({
                     </td>
                     <td className="px-3 py-3 text-end tabular-nums whitespace-nowrap text-emerald-700 dark:text-emerald-400">
                       {formatCurrency(columnTotals.totalPaid, lang)}
+                    </td>
+                    <td className="px-3 py-3 text-start tabular-nums whitespace-nowrap text-slate-600 dark:text-slate-300">
+                      {columnTotals.totalVersements} {t('versementCountShort')}
                     </td>
                     <td className="px-3 py-3 text-end tabular-nums whitespace-nowrap">
                       <span

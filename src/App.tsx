@@ -623,6 +623,79 @@ export default function App() {
     showToast(toastMsg, snapshot);
   };
 
+  const handleAddVersement = (targetRdvIds: string[], amount: number, payDate: string) => {
+    const cleanAmount = Math.round(amount);
+    if (targetRdvIds.length === 0 || !Number.isFinite(cleanAmount) || cleanAmount <= 0) return;
+    const targetSet = new Set(targetRdvIds);
+    const cleanDate = /^\d{4}-\d{2}-\d{2}$/.test(payDate) ? payDate : todayISO();
+    const snapshot = structuredClone(db);
+
+    const candidates = db.rdv
+      .filter((r) => targetSet.has(r.id))
+      .sort((a, b) => `${a.date} ${a.heure}`.localeCompare(`${b.date} ${b.heure}`));
+    if (candidates.length === 0) return;
+
+    let remainingToAllocate = cleanAmount;
+    const allocations = new Map<string, number>();
+
+    // 1. Allocate to unpaid done sessions first
+    for (const r of candidates) {
+      if (remainingToAllocate <= 0) break;
+      if (r.statut !== 'fait') continue;
+      const unpaid = Math.max(0, r.tarif - rdvPaidTotal(r));
+      if (unpaid <= 0) continue;
+      const alloc = Math.min(remainingToAllocate, unpaid);
+      allocations.set(r.id, (allocations.get(r.id) ?? 0) + alloc);
+      remainingToAllocate -= alloc;
+    }
+
+    // 2. Allocate remainder to unpaid planned sessions (advance monthly/session payment)
+    for (const r of candidates) {
+      if (remainingToAllocate <= 0) break;
+      if (r.statut !== 'prevu') continue;
+      const unpaid = Math.max(0, r.tarif - rdvPaidTotal(r) - (allocations.get(r.id) ?? 0));
+      if (unpaid <= 0) continue;
+      const alloc = Math.min(remainingToAllocate, unpaid);
+      allocations.set(r.id, (allocations.get(r.id) ?? 0) + alloc);
+      remainingToAllocate -= alloc;
+    }
+
+    // 3. Any overpayment becomes credit on the latest non-absent session (or latest session)
+    if (remainingToAllocate > 0) {
+      const nonAbsent = candidates.filter((r) => r.statut !== 'absent');
+      const targetForSurplus =
+        nonAbsent[nonAbsent.length - 1] ?? candidates[candidates.length - 1];
+      allocations.set(
+        targetForSurplus.id,
+        (allocations.get(targetForSurplus.id) ?? 0) + remainingToAllocate,
+      );
+      remainingToAllocate = 0;
+    }
+
+    const nextRdv = db.rdv.map((r) => {
+      const addAmt = allocations.get(r.id);
+      if (!addAmt || addAmt <= 0) return r;
+      return {
+        ...r,
+        pay: [...r.pay, {d: cleanDate, m: Math.round(addAmt)}],
+      };
+    });
+
+    void commitDB({...db, rdv: nextRdv});
+    showToast(t('versementAddedToast'), snapshot);
+  };
+
+  const handleRemoveVersement = (rdvId: string, payIndex: number) => {
+    const target = db.rdv.find((r) => r.id === rdvId);
+    if (!target || payIndex < 0 || payIndex >= target.pay.length) return;
+    const snapshot = structuredClone(db);
+    const nextRdv = db.rdv.map((r) =>
+      r.id === rdvId ? {...r, pay: r.pay.filter((_, idx) => idx !== payIndex)} : r,
+    );
+    void commitDB({...db, rdv: nextRdv});
+    showToast(t('paymentRemovedToast'), snapshot);
+  };
+
   const handleSendWhatsApp = (rdv: Rdv) => {
     const pat = db.patients.find((p) => p.id === rdv.pid);
     if (!pat) return;
@@ -1254,6 +1327,8 @@ export default function App() {
                 triggerPrint({kind: 'statement', patientId: pid})
               }
               onQuickMarkRdvsPaid={handleQuickMarkRdvsPaid}
+              onAddVersement={handleAddVersement}
+              onRemoveVersement={handleRemoveVersement}
               t={t}
             />
           )}

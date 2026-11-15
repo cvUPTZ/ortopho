@@ -9,12 +9,14 @@ import {
   Search,
 } from 'lucide-react';
 import {PaymentMatrix} from '../components/PaymentMatrix';
+import {VersementDialog} from '../dialogs/VersementDialog';
 import type {TranslationKey} from '../i18n';
 import type {BillingMode, DB, Patient, Rdv} from '../types';
 import {
   currentMonthYYYYMM,
   formatCurrency,
   formatDateShort,
+  formatMonthYear,
   normalizeSearch,
   patientFinancials,
   rdvPaidTotal,
@@ -27,6 +29,8 @@ interface CaisseViewProps {
   onOpenRdv: (rdv: Rdv) => void;
   onPrintStatement: (patientId: string) => void;
   onQuickMarkRdvsPaid: (rdvIds: string[], toastMsg: string) => void;
+  onAddVersement: (targetRdvIds: string[], amount: number, payDate: string) => void;
+  onRemoveVersement: (rdvId: string, payIndex: number) => void;
   t: (key: TranslationKey) => string;
 }
 
@@ -52,6 +56,8 @@ export const CaisseView: React.FC<CaisseViewProps> = ({
   onOpenRdv,
   onPrintStatement,
   onQuickMarkRdvsPaid,
+  onAddVersement,
+  onRemoveVersement,
   t,
 }) => {
   const lang = db.lang;
@@ -63,6 +69,12 @@ export const CaisseView: React.FC<CaisseViewProps> = ({
   const [expandedPids, setExpandedPids] = useState<Set<string>>(() => new Set());
   const [ledgerPage, setLedgerPage] = useState(1);
   const [balancesPage, setBalancesPage] = useState(1);
+  const [versementModal, setVersementModal] = useState<{
+    open: boolean;
+    patientId: string;
+    scopeLabel: string;
+    rdvIds: string[];
+  }>({open: false, patientId: '', scopeLabel: '', rdvIds: []});
 
   const patientMap = useMemo(() => new Map(db.patients.map((p) => [p.id, p])), [db.patients]);
 
@@ -181,6 +193,24 @@ export const CaisseView: React.FC<CaisseViewProps> = ({
     });
   };
 
+  const openVersement = (patient: Patient, scopeLabel: string, rdvIds: string[]) => {
+    setVersementModal({
+      open: true,
+      patientId: patient.id,
+      scopeLabel,
+      rdvIds,
+    });
+  };
+
+  const versementPatient = versementModal.patientId
+    ? patientMap.get(versementModal.patientId) ?? null
+    : null;
+  const versementSessions = useMemo(() => {
+    if (!versementModal.open) return [];
+    const idSet = new Set(versementModal.rdvIds);
+    return db.rdv.filter((r) => idSet.has(r.id));
+  }, [db.rdv, versementModal.open, versementModal.rdvIds]);
+
   return (
     <div className="space-y-5">
       {/* Caisse Header + Segmented View Switcher */}
@@ -234,6 +264,7 @@ export const CaisseView: React.FC<CaisseViewProps> = ({
           onOpenRdv={onOpenRdv}
           onPrintStatement={onPrintStatement}
           onQuickMarkRdvsPaid={onQuickMarkRdvsPaid}
+          onOpenVersement={openVersement}
           t={t}
         />
       ) : (
@@ -368,6 +399,19 @@ export const CaisseView: React.FC<CaisseViewProps> = ({
                               </td>
                               <td className="px-4 py-3 text-end whitespace-nowrap">
                                 <div className="inline-flex items-center justify-end gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      openVersement(
+                                        g.patient,
+                                        `${t('versementScopeMonth')} · ${formatMonthYear(month, lang)}`,
+                                        g.sessions.map((s) => s.id),
+                                      )
+                                    }
+                                    className="inline-flex min-h-8 items-center rounded-md border border-slate-200 dark:border-slate-700 px-2.5 py-1 text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 whitespace-nowrap"
+                                  >
+                                    {t('versementBtn')}
+                                  </button>
                                   {g.unpaidIds.length > 0 && g.remaining > 0 && (
                                     <button
                                       type="button"
@@ -609,6 +653,19 @@ export const CaisseView: React.FC<CaisseViewProps> = ({
           </section>
         </div>
       )}
+
+      <VersementDialog
+        open={versementModal.open}
+        patient={versementPatient}
+        scopeLabel={versementModal.scopeLabel}
+        sessions={versementSessions}
+        lang={lang}
+        onClose={() => setVersementModal((prev) => ({...prev, open: false}))}
+        onAddVersement={onAddVersement}
+        onRemoveVersement={onRemoveVersement}
+        onOpenRdv={onOpenRdv}
+        t={t}
+      />
     </div>
   );
 };
