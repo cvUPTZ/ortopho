@@ -1,4 +1,4 @@
-import type {DB, Lang, Patient, Rdv, Staff} from './types';
+import type {DB, ExpertiseDomain, Lang, Patient, Rdv, Staff} from './types';
 
 export function formatCurrency(amount: number, lang: Lang): string {
   const rounded = Math.round(amount);
@@ -202,11 +202,47 @@ export function getStaffName(db: DB, thId: string): string {
   return db.staff.find((s) => s.id === thId)?.nom ?? '';
 }
 
+export function getDomainById(
+  domains: ExpertiseDomain[],
+  domainId?: string,
+): ExpertiseDomain | undefined {
+  if (!domainId) return undefined;
+  return domains.find((d) => d.id === domainId);
+}
+
+export function getDomainTarif(db: DB, domainId?: string): number {
+  const dom = getDomainById(db.domains, domainId);
+  if (dom && typeof dom.tarif === 'number' && Number.isFinite(dom.tarif) && dom.tarif >= 0) {
+    return dom.tarif;
+  }
+  return db.tarif;
+}
+
+export function getStaffDomain(
+  domains: ExpertiseDomain[],
+  st: Staff | undefined,
+): ExpertiseDomain | undefined {
+  if (!st) return undefined;
+  if (st.domainId) {
+    const byId = domains.find((d) => d.id === st.domainId);
+    if (byId) return byId;
+  }
+  const spec = st.specialite?.trim().toLowerCase();
+  if (spec) {
+    return domains.find((d) => d.name.trim().toLowerCase() === spec);
+  }
+  return undefined;
+}
+
 export function getStaffTarif(db: DB, thId: string): number {
   if (thId) {
     const st = db.staff.find((s) => s.id === thId);
     if (st && typeof st.tarif === 'number' && Number.isFinite(st.tarif) && st.tarif >= 0) {
       return st.tarif;
+    }
+    const dom = getStaffDomain(db.domains, st);
+    if (dom && typeof dom.tarif === 'number' && Number.isFinite(dom.tarif) && dom.tarif >= 0) {
+      return dom.tarif;
     }
   }
   return db.tarif;
@@ -214,7 +250,9 @@ export function getStaffTarif(db: DB, thId: string): number {
 
 export interface StaffSpecialtyGroup {
   key: string;
+  domainId?: string;
   label: string;
+  tarif: number | null;
   hasSpecialty: boolean;
   members: Staff[];
 }
@@ -223,18 +261,32 @@ export function groupStaffBySpecialite(
   staff: Staff[],
   lang: Lang,
   unassignedLabel: string,
+  domains: ExpertiseDomain[] = [],
 ): StaffSpecialtyGroup[] {
   const locale = lang === 'ar' ? 'ar-DZ' : 'fr-FR';
   const map = new Map<string, StaffSpecialtyGroup>();
+  const domainOrder = new Map<string, number>();
+
+  domains.forEach((d, idx) => {
+    domainOrder.set(`dom:${d.id}`, idx);
+  });
 
   for (const st of staff) {
-    const cleanSpec = st.specialite?.trim() ?? '';
-    const key = cleanSpec ? cleanSpec.toLocaleLowerCase(locale) : '__none__';
+    const matchedDomain = getStaffDomain(domains, st);
+    const cleanSpec = matchedDomain ? matchedDomain.name : (st.specialite?.trim() ?? '');
+    const key = matchedDomain
+      ? `dom:${matchedDomain.id}`
+      : cleanSpec
+        ? `spec:${cleanSpec.toLocaleLowerCase(locale)}`
+        : '__none__';
+
     let group = map.get(key);
     if (!group) {
       group = {
         key,
+        domainId: matchedDomain?.id,
         label: cleanSpec || unassignedLabel,
+        tarif: matchedDomain ? matchedDomain.tarif : null,
         hasSpecialty: Boolean(cleanSpec),
         members: [],
       };
@@ -245,6 +297,11 @@ export function groupStaffBySpecialite(
 
   return Array.from(map.values()).sort((a, b) => {
     if (a.hasSpecialty !== b.hasSpecialty) return a.hasSpecialty ? -1 : 1;
+    const ordA = domainOrder.get(a.key);
+    const ordB = domainOrder.get(b.key);
+    if (ordA !== undefined && ordB !== undefined) return ordA - ordB;
+    if (ordA !== undefined) return -1;
+    if (ordB !== undefined) return 1;
     return a.label.localeCompare(b.label, locale, {sensitivity: 'base'});
   });
 }

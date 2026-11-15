@@ -63,6 +63,7 @@ function toPracticeFields(db: DB) {
     lang: db.lang,
     tarif: db.tarif,
     cab: db.cab,
+    domains: db.domains,
     staff: db.staff,
     rseq: db.rseq,
     lastBackup: db.lastBackup,
@@ -100,6 +101,7 @@ function toRdvFields(r: Rdv) {
     rno: r.rno,
     kind: r.kind,
     th: r.th,
+    domainId: r.domainId ?? '',
     dur: r.dur,
     rem: r.rem,
   });
@@ -290,6 +292,7 @@ export function subscribePracticeFromFirestore(
         lang: practiceData.lang,
         tarif: practiceData.tarif,
         cab: practiceData.cab,
+        domains: practiceData.domains,
         staff: practiceData.staff,
         rseq: practiceData.rseq,
         lastBackup: practiceData.lastBackup,

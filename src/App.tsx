@@ -67,6 +67,7 @@ import type {
   DB,
   EncryptedPayload,
   ExerciseSheet,
+  ExpertiseDomain,
   Lang,
   OutputLanguage,
   Patient,
@@ -670,22 +671,42 @@ export default function App() {
     setPatientDlg({open: false, patientId: null});
   };
 
-  // Staff & Settings helpers
-  const applyStaffUpdate = (
+  // Domains, Staff & Settings helpers
+  const applyDomainsAndStaffUpdate = (
     baseDb: DB,
+    nextDomains: ExpertiseDomain[],
     nextStaff: Staff[],
     reassignments: Record<string, string>,
   ): DB => {
-    const cleanStaff: Staff[] = nextStaff.slice(0, 20).map((s, idx) => ({
-      id: s.id,
-      nom: s.nom.trim().slice(0, 200),
-      role: idx === 0 ? 'main' : 'th',
-      ...(s.specialite?.trim() ? {specialite: s.specialite.trim().slice(0, 120)} : {}),
-      ...(typeof s.tarif === 'number' && Number.isFinite(s.tarif) && s.tarif >= 0
-        ? {tarif: Math.min(1_000_000, Math.round(s.tarif))}
-        : {}),
-    }));
+    const cleanDomains: ExpertiseDomain[] = nextDomains
+      .slice(0, 30)
+      .map((d) => ({
+        id: d.id,
+        name: d.name.trim().slice(0, 120),
+        tarif:
+          typeof d.tarif === 'number' && Number.isFinite(d.tarif) && d.tarif >= 0
+            ? Math.min(1_000_000, Math.round(d.tarif))
+            : baseDb.tarif,
+      }))
+      .filter((d) => d.name.length > 0);
+    const domainMap = new Map(cleanDomains.map((d) => [d.id, d]));
+
+    const cleanStaff: Staff[] = nextStaff.slice(0, 20).map((s, idx) => {
+      const linkedDom = s.domainId ? domainMap.get(s.domainId) : undefined;
+      const spec = linkedDom ? linkedDom.name : s.specialite?.trim().slice(0, 120);
+      return {
+        id: s.id,
+        nom: s.nom.trim().slice(0, 200),
+        role: idx === 0 ? 'main' : 'th',
+        ...(linkedDom ? {domainId: linkedDom.id} : {}),
+        ...(spec ? {specialite: spec} : {}),
+        ...(typeof s.tarif === 'number' && Number.isFinite(s.tarif) && s.tarif >= 0
+          ? {tarif: Math.min(1_000_000, Math.round(s.tarif))}
+          : {}),
+      };
+    });
     const validIds = new Set(cleanStaff.map((s) => s.id));
+    const staffMap = new Map(cleanStaff.map((s) => [s.id, s]));
     const remapTh = (thId: string): string => {
       if (!thId) return '';
       let cur = thId;
@@ -698,6 +719,7 @@ export default function App() {
     };
     return {
       ...baseDb,
+      domains: cleanDomains,
       staff: cleanStaff,
       patients: baseDb.patients.map((p) => {
         const nextTh = remapTh(p.th);
@@ -705,13 +727,26 @@ export default function App() {
       }),
       rdv: baseDb.rdv.map((r) => {
         const nextTh = remapTh(r.th);
-        return nextTh === r.th ? r : {...r, th: nextTh};
+        const remappedStaffDom = nextTh ? staffMap.get(nextTh)?.domainId ?? '' : '';
+        const existingDomValid = r.domainId && domainMap.has(r.domainId) ? r.domainId : '';
+        const nextDomId = existingDomValid || remappedStaffDom;
+        if (nextTh === r.th && (nextDomId || '') === (r.domainId || '')) return r;
+        const {domainId: _omitDom, ...rest} = r;
+        return {
+          ...rest,
+          th: nextTh,
+          ...(nextDomId ? {domainId: nextDomId} : {}),
+        };
       }),
     };
   };
 
-  const handleSaveTherapists = (nextStaff: Staff[], reassignments: Record<string, string>) => {
-    const updatedDb = applyStaffUpdate(db, nextStaff, reassignments);
+  const handleSaveTherapists = (
+    nextDomains: ExpertiseDomain[],
+    nextStaff: Staff[],
+    reassignments: Record<string, string>,
+  ) => {
+    const updatedDb = applyDomainsAndStaffUpdate(db, nextDomains, nextStaff, reassignments);
     void commitDB(updatedDb);
     setTherapistsOpen(false);
     showToast(t('therapistsSavedToast'));
@@ -721,11 +756,17 @@ export default function App() {
   const handleSaveSettings = (
     cab: Cabinet,
     tarif: number,
+    domains: ExpertiseDomain[],
     staff: Staff[],
     ai: AiSettings,
     reassignments: Record<string, string> = {},
   ) => {
-    const updatedDb = applyStaffUpdate({...db, cab, tarif, ai}, staff, reassignments);
+    const updatedDb = applyDomainsAndStaffUpdate(
+      {...db, cab, tarif, ai},
+      domains,
+      staff,
+      reassignments,
+    );
     void commitDB(updatedDb);
     setSettingsDlg({open: false, focusAi: false});
   };

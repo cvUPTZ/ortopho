@@ -3,10 +3,17 @@ export type Stage = 'req' | 'diag' | 'orient' | 'suivi' | 'clos';
 export type RdvStatut = 'prevu' | 'fait' | 'absent';
 export type RdvKind = 'diag' | 'suivi';
 
+export interface ExpertiseDomain {
+  id: string;
+  name: string;
+  tarif: number;
+}
+
 export interface Staff {
   id: string;
   nom: string;
   role: 'main' | 'th';
+  domainId?: string;
   specialite?: string;
   tarif?: number;
 }
@@ -55,6 +62,7 @@ export interface Rdv {
   rno: string; // receipt number "R-YYYY-0001"
   kind: RdvKind;
   th: string; // staff id or ''
+  domainId?: string; // expertise domain id or ''
   dur: number; // minutes 5..240
   rem: string; // "YYYY-MM-DD HH:MM"
 }
@@ -204,6 +212,7 @@ export interface DB {
   rdv: Rdv[];
   bilans: Bilan[];
   cab: Cabinet;
+  domains: ExpertiseDomain[];
   staff: Staff[];
   rseq: number;
   lastBackup: number;

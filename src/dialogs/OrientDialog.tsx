@@ -5,7 +5,7 @@ import {TherapistSelectOptions} from '../components/TherapistSelectOptions';
 import {PATHOLOGIES, type TranslationKey} from '../i18n';
 import {makeId, todayISO} from '../storage';
 import type {DB, Patient, Rdv} from '../types';
-import {addDaysISO, getStaffTarif, hasOverlap} from '../utils';
+import {addDaysISO, formatCurrency, getDomainTarif, getStaffDomain, getStaffTarif, hasOverlap} from '../utils';
 
 interface OrientDialogProps {
   open: boolean;
@@ -27,6 +27,7 @@ export const OrientDialog: React.FC<OrientDialogProps> = ({
   const lang = db.lang;
   const defaultDur = Number(db.cab.dur) || 30;
 
+  const [domainId, setDomainId] = useState('');
   const [th, setTh] = useState('');
   const [patho, setPatho] = useState('');
   const [firstDate, setFirstDate] = useState(todayISO());
@@ -40,13 +41,24 @@ export const OrientDialog: React.FC<OrientDialogProps> = ({
   useEffect(() => {
     if (open && patient) {
       const initialTh = patient.th || db.staff[0]?.id || '';
+      const thDomId = initialTh
+        ? getStaffDomain(db.domains, db.staff.find((s) => s.id === initialTh))?.id ?? ''
+        : '';
+      const initialDomId = thDomId || db.domains[0]?.id || '';
+      setDomainId(initialDomId);
       setTh(initialTh);
       setPatho(patient.patho || '');
       setFirstDate(todayISO());
       setHeure('09:00');
       setDur(defaultDur);
       setWeeks(12);
-      setTarif(getStaffTarif(db, initialTh));
+      setTarif(
+        initialTh
+          ? getStaffTarif(db, initialTh)
+          : initialDomId
+            ? getDomainTarif(db, initialDomId)
+            : db.tarif,
+      );
       setTarifManuallyEdited(false);
       setConfirmOverlap(false);
     }
@@ -76,6 +88,7 @@ export const OrientDialog: React.FC<OrientDialogProps> = ({
         rno: '',
         kind: 'suivi',
         th,
+        ...(domainId ? {domainId} : {}),
         dur: cleanDur,
         rem: '',
       });
@@ -126,6 +139,45 @@ export const OrientDialog: React.FC<OrientDialogProps> = ({
       >
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {db.domains.length > 0 && (
+              <div className="sm:col-span-2">
+                <label htmlFor="or-domain" className="block text-sm font-medium mb-1">
+                  {t('domainLabel')}
+                </label>
+                <select
+                  id="or-domain"
+                  value={domainId}
+                  onChange={(e) => {
+                    const nextDomId = e.target.value;
+                    setDomainId(nextDomId);
+                    const domainStaff = nextDomId
+                      ? db.staff.filter((s) => getStaffDomain(db.domains, s)?.id === nextDomId)
+                      : db.staff;
+                    const currentValid = th && domainStaff.some((s) => s.id === th);
+                    const nextTh = currentValid ? th : nextDomId ? domainStaff[0]?.id ?? '' : th;
+                    setTh(nextTh);
+                    if (!tarifManuallyEdited) {
+                      setTarif(
+                        nextTh
+                          ? getStaffTarif(db, nextTh)
+                          : nextDomId
+                            ? getDomainTarif(db, nextDomId)
+                            : db.tarif,
+                      );
+                    }
+                  }}
+                  className="w-full min-h-11 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm"
+                >
+                  <option value="">{t('allDomains')}</option>
+                  {db.domains.map((dom) => (
+                    <option key={dom.id} value={dom.id}>
+                      {dom.name} — {formatCurrency(dom.tarif, lang)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <div>
               <label htmlFor="or-th" className="block text-sm font-medium mb-1">
                 {t('therapistLabel')}
@@ -136,13 +188,25 @@ export const OrientDialog: React.FC<OrientDialogProps> = ({
                 onChange={(e) => {
                   const nextTh = e.target.value;
                   setTh(nextTh);
+                  const nextDomId = nextTh
+                    ? getStaffDomain(db.domains, db.staff.find((s) => s.id === nextTh))?.id ??
+                      domainId
+                    : domainId;
+                  setDomainId(nextDomId);
                   if (!tarifManuallyEdited) {
-                    setTarif(getStaffTarif(db, nextTh));
+                    setTarif(
+                      nextTh
+                        ? getStaffTarif(db, nextTh)
+                        : nextDomId
+                          ? getDomainTarif(db, nextDomId)
+                          : db.tarif,
+                    );
                   }
                 }}
                 className="w-full min-h-11 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm"
               >
-                <TherapistSelectOptions db={db} t={t} />
+                <option value="">{t('unassigned')}</option>
+                <TherapistSelectOptions db={db} t={t} domainId={domainId || undefined} />
               </select>
             </div>
 

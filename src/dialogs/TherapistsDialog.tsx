@@ -2,13 +2,17 @@ import React, {useEffect, useMemo, useState} from 'react';
 import {Modal} from '../components/Modal';
 import {StaffCrudPanel} from '../components/StaffCrudPanel';
 import type {TranslationKey} from '../i18n';
-import type {DB, Staff} from '../types';
+import type {DB, ExpertiseDomain, Staff} from '../types';
 
 interface TherapistsDialogProps {
   open: boolean;
   db: DB;
   onClose: () => void;
-  onSave: (nextStaff: Staff[], reassignments: Record<string, string>) => void;
+  onSave: (
+    nextDomains: ExpertiseDomain[],
+    nextStaff: Staff[],
+    reassignments: Record<string, string>,
+  ) => void;
   t: (key: TranslationKey) => string;
 }
 
@@ -19,22 +23,25 @@ export const TherapistsDialog: React.FC<TherapistsDialogProps> = ({
   onSave,
   t,
 }) => {
+  const [domainsDraft, setDomainsDraft] = useState<ExpertiseDomain[]>(db.domains);
   const [staffDraft, setStaffDraft] = useState<Staff[]>(db.staff);
   const [reassignments, setReassignments] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (open) {
+      setDomainsDraft(db.domains.map((d) => ({...d})));
       setStaffDraft(db.staff.map((s) => ({...s})));
       setReassignments({});
     }
-  }, [open, db.staff]);
+  }, [open, db.domains, db.staff]);
 
   const isDirty = useMemo(() => {
     return (
+      JSON.stringify(domainsDraft) !== JSON.stringify(db.domains) ||
       JSON.stringify(staffDraft) !== JSON.stringify(db.staff) ||
       Object.keys(reassignments).length > 0
     );
-  }, [staffDraft, db.staff, reassignments]);
+  }, [domainsDraft, db.domains, staffDraft, db.staff, reassignments]);
 
   return (
     <Modal
@@ -55,7 +62,7 @@ export const TherapistsDialog: React.FC<TherapistsDialogProps> = ({
           </button>
           <button
             type="button"
-            onClick={() => onSave(staffDraft, reassignments)}
+            onClick={() => onSave(domainsDraft, staffDraft, reassignments)}
             className="min-h-10 rounded-lg accent-bg px-4 py-2 text-sm font-semibold whitespace-nowrap"
           >
             {t('save')}
@@ -64,13 +71,15 @@ export const TherapistsDialog: React.FC<TherapistsDialogProps> = ({
       }
     >
       <StaffCrudPanel
+        domains={domainsDraft}
         staff={staffDraft}
         patients={db.patients}
         rdv={db.rdv}
         defaultTarif={db.tarif}
         lang={db.lang}
         reassignments={reassignments}
-        onChange={(nextStaff, nextReassign) => {
+        onChange={(nextDomains, nextStaff, nextReassign) => {
+          setDomainsDraft(nextDomains);
           setStaffDraft(nextStaff);
           setReassignments(nextReassign);
         }}

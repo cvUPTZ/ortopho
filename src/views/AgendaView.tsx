@@ -23,6 +23,7 @@ import {
   formatDayMonth,
   getMondayISO,
   getPatientName,
+  getStaffDomain,
   getStaffName,
   getStaffTarif,
   groupStaffBySpecialite,
@@ -51,6 +52,8 @@ interface TherapistColumn {
   id: string;
   nom: string;
   specialite: string;
+  domainId?: string;
+  domainTarif: number | null;
   specKey: string;
   specLabel: string;
   tarif: number | null;
@@ -78,8 +81,8 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
   const [showWeekend, setShowWeekend] = useState<boolean>(false);
 
   const specialtyGroups = useMemo(
-    () => groupStaffBySpecialite(db.staff, lang, t('noSpecialtyLabel')),
-    [db.staff, lang, t],
+    () => groupStaffBySpecialite(db.staff, lang, t('noDomainLabel'), db.domains),
+    [db.staff, lang, t, db.domains],
   );
   const hasSpecialties = useMemo(
     () => specialtyGroups.some((g) => g.hasSpecialty),
@@ -201,7 +204,9 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
         cols.push({
           id: s.id,
           nom: s.nom,
-          specialite: s.specialite ?? '',
+          specialite: grp.hasSpecialty ? grp.label : (s.specialite ?? ''),
+          domainId: grp.domainId,
+          domainTarif: grp.tarif,
           specKey: grp.key,
           specLabel: grp.label,
           tarif: getStaffTarif(db, s.id),
@@ -222,6 +227,7 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
         id: '__unassigned__',
         nom: t('unassignedCol'),
         specialite: '',
+        domainTarif: null,
         specKey: '__unassigned__',
         specLabel: t('unassignedCol'),
         tarif: null,
@@ -272,6 +278,7 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
         id: '__unassigned__',
         nom: t('unassignedCol'),
         specialite: '',
+        domainTarif: null,
         specKey: '__unassigned__',
         specLabel: t('unassignedCol'),
         tarif: null,
@@ -345,7 +352,7 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
 
           {hasSpecialties && db.staff.length > 0 && (
             <select
-              aria-label={t('specialtyLabel')}
+              aria-label={t('domainLabel')}
               value={effectiveFilterSpec}
               onChange={(e) => {
                 setFilterSpec(e.target.value);
@@ -353,10 +360,11 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
               }}
               className="min-h-11 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-sm"
             >
-              <option value="">{t('allSpecialties')}</option>
+              <option value="">{t('allDomains')}</option>
               {specialtyGroups.map((grp) => (
                 <option key={grp.key} value={grp.key}>
                   {grp.label} ({grp.members.length})
+                  {grp.tarif !== null ? ` · ${formatCurrency(grp.tarif, lang)}` : ''}
                 </option>
               ))}
             </select>
@@ -372,7 +380,14 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
               <option value="">{t('allTherapists')}</option>
               {!effectiveFilterSpec && hasSpecialties
                 ? specialtyGroups.map((grp) => (
-                    <optgroup key={grp.key} label={grp.label}>
+                    <optgroup
+                      key={grp.key}
+                      label={
+                        grp.tarif !== null
+                          ? `${grp.label} — ${formatCurrency(grp.tarif, lang)}`
+                          : grp.label
+                      }
+                    >
                       {grp.members.map((st) => (
                         <option key={st.id} value={st.id}>
                           {st.nom} — {formatCurrency(getStaffTarif(db, st.id), lang)}
@@ -533,13 +548,23 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
                         {t('timeLabel')}
                       </th>
                       {(() => {
-                        const spans: {key: string; label: string; count: number}[] = [];
+                        const spans: {
+                          key: string;
+                          label: string;
+                          tarif: number | null;
+                          count: number;
+                        }[] = [];
                         for (const col of dayColumns) {
                           const last = spans[spans.length - 1];
                           if (last && last.key === col.specKey) {
                             last.count += 1;
                           } else {
-                            spans.push({key: col.specKey, label: col.specLabel, count: 1});
+                            spans.push({
+                              key: col.specKey,
+                              label: col.specLabel,
+                              tarif: col.domainTarif,
+                              count: 1,
+                            });
                           }
                         }
                         return spans.map((sp) => (
@@ -548,7 +573,12 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
                             colSpan={sp.count}
                             className="px-3 py-1.5 text-start text-[11px] font-bold uppercase tracking-wide text-slate-700 dark:text-slate-200 border-e last:border-e-0 border-slate-200 dark:border-slate-800"
                           >
-                            {sp.label}
+                            <span>{sp.label}</span>
+                            {sp.tarif !== null && (
+                              <span className="ms-1.5 font-semibold text-emerald-700 dark:text-emerald-300 normal-case tabular-nums">
+                                · {formatCurrency(sp.tarif, lang)}
+                              </span>
+                            )}
                           </th>
                         ));
                       })()}
@@ -588,7 +618,13 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
                             {!col.isUnassigned && (
                               <button
                                 type="button"
-                                onClick={() => onOpenRdv(null, {date: selectedDate, th: col.id})}
+                                onClick={() =>
+                                  onOpenRdv(null, {
+                                    date: selectedDate,
+                                    th: col.id,
+                                    domainId: col.domainId,
+                                  })
+                                }
                                 title={`${t('newAppointment')} — ${col.nom}`}
                                 aria-label={`${t('newAppointment')} — ${col.nom}`}
                                 className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700"
@@ -757,6 +793,7 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
                                           heure: slotTime,
                                           dur: slotDur,
                                           th: col.id,
+                                          domainId: col.domainId,
                                         })
                                       }
                                       className="flex w-full min-h-8 items-center justify-center gap-1 rounded-md border border-dashed border-slate-200 dark:border-slate-800 px-2 py-1 text-[11px] text-slate-400 dark:text-slate-500 hover:border-slate-400 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors"
@@ -978,13 +1015,23 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
                           {t('colDate')}
                         </th>
                         {(() => {
-                          const spans: {key: string; label: string; count: number}[] = [];
+                          const spans: {
+                            key: string;
+                            label: string;
+                            tarif: number | null;
+                            count: number;
+                          }[] = [];
                           for (const col of weekColumns) {
                             const last = spans[spans.length - 1];
                             if (last && last.key === col.specKey) {
                               last.count += 1;
                             } else {
-                              spans.push({key: col.specKey, label: col.specLabel, count: 1});
+                              spans.push({
+                                key: col.specKey,
+                                label: col.specLabel,
+                                tarif: col.domainTarif,
+                                count: 1,
+                              });
                             }
                           }
                           return spans.map((sp) => (
@@ -993,7 +1040,12 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
                               colSpan={sp.count}
                               className="px-3 py-1.5 text-start text-[11px] font-bold uppercase tracking-wide text-slate-700 dark:text-slate-200 border-e last:border-e-0 border-slate-200 dark:border-slate-800"
                             >
-                              {sp.label}
+                              <span>{sp.label}</span>
+                              {sp.tarif !== null && (
+                                <span className="ms-1.5 font-semibold text-emerald-700 dark:text-emerald-300 normal-case tabular-nums">
+                                  · {formatCurrency(sp.tarif, lang)}
+                                </span>
+                              )}
                             </th>
                           ));
                         })()}
@@ -1035,6 +1087,7 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
                                     onOpenRdv(null, {
                                       date: weekStart,
                                       th: col.id,
+                                      domainId: col.domainId,
                                       repeatWeekly: true,
                                     })
                                   }
@@ -1112,7 +1165,13 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
                                   {!col.isUnassigned && (
                                     <button
                                       type="button"
-                                      onClick={() => onOpenRdv(null, {date: d, th: col.id})}
+                                      onClick={() =>
+                                        onOpenRdv(null, {
+                                          date: d,
+                                          th: col.id,
+                                          domainId: col.domainId,
+                                        })
+                                      }
                                       className="flex w-full min-h-7 items-center justify-center gap-1 rounded border border-dashed border-slate-200 dark:border-slate-800 px-2 py-1 text-[11px] text-slate-400 dark:text-slate-500 hover:border-slate-400 hover:text-slate-700 dark:hover:text-slate-300 transition-colors"
                                     >
                                       <Plus className="h-3 w-3" />
@@ -1134,6 +1193,7 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
             /* Single-Therapist Focused Weekly Planning (Heure × Jours) */
             (() => {
               const selectedStaff = db.staff.find((s) => s.id === effectiveFilterTh) ?? db.staff[0];
+              const selectedDom = getStaffDomain(db.domains, selectedStaff);
               const staffRdvs = weekAllRdvs.filter((r) => r.th === selectedStaff.id);
               const slotTimes = Array.from(new Set(staffRdvs.map((r) => r.heure))).sort();
 
@@ -1145,7 +1205,9 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
                         {t('planningHeader')} : {selectedStaff.nom}
                       </h2>
                       <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 tabular-nums mt-0.5">
-                        {selectedStaff.specialite && <span>{selectedStaff.specialite} ·</span>}
+                        {(selectedDom?.name || selectedStaff.specialite) && (
+                          <span>{selectedDom?.name || selectedStaff.specialite} ·</span>
+                        )}
                         <span className="rounded bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-900 px-1.5 py-0.5 font-semibold">
                           {formatCurrency(getStaffTarif(db, selectedStaff.id), lang)}
                         </span>

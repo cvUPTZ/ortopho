@@ -619,14 +619,20 @@ export const PrintContainer: React.FC<PrintContainerProps> = ({db, doc, t}) => {
     if (hasSat) dayRows.push(daysAll[5]);
     if (hasSun) dayRows.push(daysAll[6]);
 
-    const specialtyGroups = groupStaffBySpecialite(db.staff, lang, t('noSpecialtyLabel'));
+    const specialtyGroups = groupStaffBySpecialite(
+      db.staff,
+      lang,
+      t('noDomainLabel'),
+      db.domains,
+    );
     const hasSpecialties = specialtyGroups.some((g) => g.hasSpecialty);
     const columns = [
       ...specialtyGroups.flatMap((grp) =>
         grp.members.map((s) => ({
           id: s.id,
           nom: s.nom,
-          specialite: s.specialite ?? '',
+          specialite: grp.hasSpecialty ? grp.label : (s.specialite ?? ''),
+          domainTarif: grp.tarif,
           specKey: grp.key,
           specLabel: grp.label,
           tarif: getStaffTarif(db, s.id),
@@ -639,6 +645,7 @@ export const PrintContainer: React.FC<PrintContainerProps> = ({db, doc, t}) => {
               id: '__unassigned__',
               nom: t('unassignedCol'),
               specialite: '',
+              domainTarif: null as number | null,
               specKey: '__unassigned__',
               specLabel: t('unassignedCol'),
               tarif: null as number | null,
@@ -667,13 +674,18 @@ export const PrintContainer: React.FC<PrintContainerProps> = ({db, doc, t}) => {
                   {t('colDate')}
                 </th>
                 {(() => {
-                  const spans: {key: string; label: string; count: number}[] = [];
+                  const spans: {key: string; label: string; tarif: number | null; count: number}[] = [];
                   for (const col of columns) {
                     const last = spans[spans.length - 1];
                     if (last && last.key === col.specKey) {
                       last.count += 1;
                     } else {
-                      spans.push({key: col.specKey, label: col.specLabel, count: 1});
+                      spans.push({
+                        key: col.specKey,
+                        label: col.specLabel,
+                        tarif: col.domainTarif,
+                        count: 1,
+                      });
                     }
                   }
                   return spans.map((sp) => (
@@ -683,6 +695,7 @@ export const PrintContainer: React.FC<PrintContainerProps> = ({db, doc, t}) => {
                       className="border border-neutral-400 px-2 py-1 text-start text-[10px] font-bold uppercase"
                     >
                       {sp.label}
+                      {sp.tarif !== null ? ` · ${formatCurrency(sp.tarif, lang)}` : ''}
                     </th>
                   ));
                 })()}

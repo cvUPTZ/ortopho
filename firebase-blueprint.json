@@ -24,9 +24,13 @@
           "type": "object",
           "description": "Cabinet identity, hours, slot duration, accent color, logo, and WhatsApp template."
         },
+        "domains": {
+          "type": "array",
+          "description": "List of up to 30 configurable expertise domains with id, name, and tarif."
+        },
         "staff": {
           "type": "array",
-          "description": "List of up to 20 therapists with id, nom, role, optional specialite, and optional per-therapist tarif."
+          "description": "List of up to 20 therapists with id, nom, role, optional domainId, optional specialite, and optional per-therapist tarif."
         },
         "rseq": {
           "type": "integer",
@@ -56,6 +60,7 @@
         "lang",
         "tarif",
         "cab",
+        "domains",
         "staff",
         "rseq",
         "lastBackup",
@@ -149,6 +154,7 @@
           "enum": ["diag", "suivi"]
         },
         "th": { "type": "string", "maxLength": 100 },
+        "domainId": { "type": "string", "maxLength": 100 },
         "dur": { "type": "integer" },
         "rem": { "type": "string", "maxLength": 30 },
         "createdAt": { "type": "string", "format": "date-time" },
@@ -167,6 +173,7 @@
         "rno",
         "kind",
         "th",
+        "domainId",
         "dur",
         "rem",
         "createdAt",

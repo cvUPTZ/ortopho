@@ -1,4 +1,4 @@
-import {createDefaultAiSettings, emptyAnamnese, makeId, todayISO} from './storage';
+import {createDefaultAiSettings, createDefaultDomains, emptyAnamnese, makeId, todayISO} from './storage';
 import {getBilanTemplates} from './templates';
 import type {Bilan, DB, Lang, Patient, Rdv, Staff} from './types';
 import {addDaysISO} from './utils';
@@ -15,22 +15,39 @@ export function generateDemoDB(lang: Lang): DB {
   const today = todayISO();
   const tomorrow = addDaysISO(today, 1);
 
+  const domains = createDefaultDomains(lang, 2000);
+  const orthoDom = domains[0];
+  const psyDom = domains[1];
+  const denverDom = domains[2];
+
   const staff: Staff[] = [
     {
       id: 'st_demo_1',
       nom: 'Mme Samira Benali',
       role: 'main',
-      specialite:
-        lang === 'ar' ? 'اللغة الشفهية والأمراض العصبية' : 'Langage oral & Neurologie',
-      tarif: 2500,
+      domainId: orthoDom.id,
+      specialite: orthoDom.name,
     },
     {
       id: 'st_demo_2',
       nom: 'M. Karim Haddad',
       role: 'th',
-      specialite:
-        lang === 'ar' ? 'الطلاقة، النطق والصوت' : 'Fluence, Articulation & Voix',
-      tarif: 2000,
+      domainId: orthoDom.id,
+      specialite: orthoDom.name,
+    },
+    {
+      id: 'st_demo_3',
+      nom: 'Dr. Nadia Bencherif',
+      role: 'th',
+      domainId: psyDom.id,
+      specialite: psyDom.name,
+    },
+    {
+      id: 'st_demo_4',
+      nom: 'Mme Kenza Touati',
+      role: 'th',
+      domainId: denverDom.id,
+      specialite: denverDom.name,
     },
   ];
 
@@ -240,12 +257,13 @@ export function generateDemoDB(lang: Lang): DB {
     heure: string;
     dur: number;
   }[] = [
-    {pid: 'pat_demo_1', th: 'st_demo_1', dayOffsetFromToday: 0, heure: '09:00', dur: 30}, // Today!
-    {pid: 'pat_demo_2', th: 'st_demo_1', dayOffsetFromToday: 0, heure: '10:00', dur: 30}, // Today!
-    {pid: 'pat_demo_5', th: 'st_demo_1', dayOffsetFromToday: 1, heure: '09:30', dur: 45}, // Tomorrow!
-    {pid: 'pat_demo_3', th: 'st_demo_2', dayOffsetFromToday: 0, heure: '11:00', dur: 30}, // Today!
-    {pid: 'pat_demo_4', th: 'st_demo_2', dayOffsetFromToday: 1, heure: '10:30', dur: 30}, // Tomorrow!
-    {pid: 'pat_demo_6', th: 'st_demo_2', dayOffsetFromToday: 2, heure: '14:00', dur: 30},
+    {pid: 'pat_demo_1', th: 'st_demo_1', dayOffsetFromToday: 0, heure: '09:00', dur: 30}, // Today Orthophonie
+    {pid: 'pat_demo_2', th: 'st_demo_1', dayOffsetFromToday: 0, heure: '10:00', dur: 30}, // Today Orthophonie
+    {pid: 'pat_demo_5', th: 'st_demo_1', dayOffsetFromToday: 1, heure: '09:30', dur: 45}, // Tomorrow Orthophonie
+    {pid: 'pat_demo_3', th: 'st_demo_2', dayOffsetFromToday: 0, heure: '11:00', dur: 30}, // Today Orthophonie
+    {pid: 'pat_demo_4', th: 'st_demo_2', dayOffsetFromToday: 1, heure: '10:30', dur: 30}, // Tomorrow Orthophonie
+    {pid: 'pat_demo_6', th: 'st_demo_3', dayOffsetFromToday: 0, heure: '14:00', dur: 45}, // Today Psychologie
+    {pid: 'pat_demo_8', th: 'st_demo_4', dayOffsetFromToday: 0, heure: '11:30', dur: 60}, // Today Denver
     {pid: 'pat_demo_1', th: 'st_demo_1', dayOffsetFromToday: 3, heure: '09:00', dur: 30},
   ];
 
@@ -264,8 +282,9 @@ export function generateDemoDB(lang: Lang): DB {
         statut = pastCounter % 7 === 0 ? 'absent' : 'fait';
       }
 
-      const stTarif = staff.find((s) => s.id === sc.th)?.tarif ?? 2000;
-      const tarif = stTarif;
+      const st = staff.find((s) => s.id === sc.th);
+      const dom = domains.find((d) => d.id === st?.domainId);
+      const tarif = st?.tarif ?? dom?.tarif ?? 2000;
       const pay =
         statut === 'fait'
           ? [{d: date, m: tarif}]
@@ -298,6 +317,7 @@ export function generateDemoDB(lang: Lang): DB {
         rno,
         kind: 'suivi',
         th: sc.th,
+        ...(dom?.id ? {domainId: dom.id} : {}),
         dur: sc.dur,
         rem: '',
       };
@@ -475,6 +495,7 @@ export function generateDemoDB(lang: Lang): DB {
       dur: '30',
       wamsg: '',
     },
+    domains,
     staff,
     rseq,
     lastBackup: Date.now(),

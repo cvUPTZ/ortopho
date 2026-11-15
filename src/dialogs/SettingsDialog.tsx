@@ -3,7 +3,7 @@ import {Database, Lock, Sparkles, Trash2, Upload} from 'lucide-react';
 import {Modal} from '../components/Modal';
 import {StaffCrudPanel} from '../components/StaffCrudPanel';
 import type {TranslationKey} from '../i18n';
-import type {AiSettings, Cabinet, DB, Staff} from '../types';
+import type {AiSettings, Cabinet, DB, ExpertiseDomain, Staff} from '../types';
 
 interface SettingsDialogProps {
   open: boolean;
@@ -14,6 +14,7 @@ interface SettingsDialogProps {
   onSave: (
     cab: Cabinet,
     tarif: number,
+    domains: ExpertiseDomain[],
     staff: Staff[],
     ai: AiSettings,
     reassignments: Record<string, string>,
@@ -82,6 +83,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
 }) => {
   const [cab, setCab] = useState<Cabinet>(db.cab);
   const [tarif, setTarif] = useState<number>(db.tarif);
+  const [domainsDraft, setDomainsDraft] = useState<ExpertiseDomain[]>(db.domains);
   const [staffDraft, setStaffDraft] = useState<Staff[]>(db.staff);
   const [reassignments, setReassignments] = useState<Record<string, string>>({});
   const [logoError, setLogoError] = useState<string>('');
@@ -94,17 +96,19 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
     () => ({
       cab: db.cab,
       tarif: db.tarif,
+      domains: db.domains,
       staff: db.staff,
       aiEnabled: db.ai.enabled,
       aiModel: db.ai.model,
     }),
-    [db.cab, db.tarif, db.staff, db.ai.enabled, db.ai.model],
+    [db.cab, db.tarif, db.domains, db.staff, db.ai.enabled, db.ai.model],
   );
 
   useEffect(() => {
     if (open) {
       setCab({...db.cab});
       setTarif(db.tarif);
+      setDomainsDraft(db.domains.map((d) => ({...d})));
       setStaffDraft(db.staff.map((s) => ({...s})));
       setReassignments({});
       setLogoError('');
@@ -116,14 +120,20 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
         }, 60);
       }
     }
-  }, [open, focusAiSection, db.cab, db.tarif, db.staff, db.ai.enabled, db.ai.model]);
+  }, [open, focusAiSection, db.cab, db.tarif, db.domains, db.staff, db.ai.enabled, db.ai.model]);
 
   const isDirty = useMemo(() => {
     return (
-      JSON.stringify({cab, tarif, staff: staffDraft, aiEnabled, aiModel}) !==
-        JSON.stringify(initialSnapshot) || Object.keys(reassignments).length > 0
+      JSON.stringify({
+        cab,
+        tarif,
+        domains: domainsDraft,
+        staff: staffDraft,
+        aiEnabled,
+        aiModel,
+      }) !== JSON.stringify(initialSnapshot) || Object.keys(reassignments).length > 0
     );
-  }, [cab, tarif, staffDraft, reassignments, aiEnabled, aiModel, initialSnapshot]);
+  }, [cab, tarif, domainsDraft, staffDraft, reassignments, aiEnabled, aiModel, initialSnapshot]);
 
   const handleLogoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -140,19 +150,35 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
 
   const handleSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
+    const nextDomains: ExpertiseDomain[] = domainsDraft
+      .slice(0, 30)
+      .map((d) => ({
+        id: d.id,
+        name: d.name.trim().slice(0, 120),
+        tarif:
+          typeof d.tarif === 'number' && Number.isFinite(d.tarif) && d.tarif >= 0
+            ? Math.min(1_000_000, Math.round(d.tarif))
+            : Math.max(0, Math.round(Number(tarif) || 0)),
+      }))
+      .filter((d) => d.name.length > 0);
+    const domainMap = new Map(nextDomains.map((d) => [d.id, d]));
+
     const nextStaff: Staff[] = staffDraft
       .slice(0, 20)
-      .map(
-        (s, idx): Staff => ({
+      .map((s, idx): Staff => {
+        const linkedDom = s.domainId ? domainMap.get(s.domainId) : undefined;
+        const spec = linkedDom ? linkedDom.name : s.specialite?.trim().slice(0, 120);
+        return {
           id: s.id,
           nom: s.nom.trim().slice(0, 200),
           role: idx === 0 ? 'main' : 'th',
-          ...(s.specialite?.trim() ? {specialite: s.specialite.trim().slice(0, 120)} : {}),
+          ...(linkedDom ? {domainId: linkedDom.id} : {}),
+          ...(spec ? {specialite: spec} : {}),
           ...(typeof s.tarif === 'number' && Number.isFinite(s.tarif) && s.tarif >= 0
             ? {tarif: Math.min(1_000_000, Math.round(s.tarif))}
             : {}),
-        }),
-      )
+        };
+      })
       .filter((s) => s.nom.length > 0);
 
     const cleanDur = String(Math.min(120, Math.max(10, Math.round(Number(cab.dur) || 30))));
@@ -170,6 +196,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
         wamsg: cab.wamsg.slice(0, 500),
       },
       cleanTarif,
+      nextDomains,
       nextStaff,
       {
         enabled: aiEnabled,
@@ -303,13 +330,15 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
           <div className="sm:col-span-2">
             <div className="text-sm font-medium mb-2">{t('therapistsTitle')}</div>
             <StaffCrudPanel
+              domains={domainsDraft}
               staff={staffDraft}
               patients={db.patients}
               rdv={db.rdv}
               defaultTarif={Math.max(0, Math.round(Number(tarif) || 0))}
               lang={db.lang}
               reassignments={reassignments}
-              onChange={(nextStaff, nextReassign) => {
+              onChange={(nextDomains, nextStaff, nextReassign) => {
+                setDomainsDraft(nextDomains);
                 setStaffDraft(nextStaff);
                 setReassignments(nextReassign);
               }}

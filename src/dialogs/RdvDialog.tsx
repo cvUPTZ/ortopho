@@ -10,7 +10,9 @@ import {
   addDaysISO,
   formatCurrency,
   formatDateShort,
+  getDomainTarif,
   getMondayISO,
+  getStaffDomain,
   getStaffTarif,
   hasOverlap,
   parseISODateLocal,
@@ -22,6 +24,7 @@ export interface RdvSeed {
   date?: string;
   heure?: string;
   th?: string;
+  domainId?: string;
   pid?: string;
   kind?: RdvKind;
   dur?: number;
@@ -63,14 +66,26 @@ export const RdvDialog: React.FC<RdvDialogProps> = ({
 
   const initialForm = useMemo<Rdv>(() => {
     if (rdv) {
+      const staffDom = rdv.th
+        ? getStaffDomain(db.domains, db.staff.find((s) => s.id === rdv.th))?.id ?? ''
+        : '';
       return {
         ...rdv,
+        domainId: rdv.domainId || staffDom,
         pay: rdv.pay.map((p) => ({...p})),
       };
     }
     const defaultDur = Number(db.cab.dur) || 30;
     const defaultTh = seed?.th ?? (db.staff.length === 1 ? db.staff[0].id : '');
-    const defaultTarif = getStaffTarif(db, defaultTh);
+    const thDom = defaultTh
+      ? getStaffDomain(db.domains, db.staff.find((s) => s.id === defaultTh))?.id ?? ''
+      : '';
+    const defaultDom = seed?.domainId ?? (thDom || (db.domains.length === 1 ? db.domains[0].id : ''));
+    const defaultTarif = defaultTh
+      ? getStaffTarif(db, defaultTh)
+      : defaultDom
+        ? getDomainTarif(db, defaultDom)
+        : db.tarif;
     return {
       id: makeId('rdv'),
       pid: seed?.pid ?? '',
@@ -83,6 +98,7 @@ export const RdvDialog: React.FC<RdvDialogProps> = ({
       rno: '',
       kind: seed?.kind ?? 'suivi',
       th: defaultTh,
+      domainId: defaultDom,
       dur: seed?.dur ?? defaultDur,
       rem: '',
     };
@@ -164,8 +180,11 @@ export const RdvDialog: React.FC<RdvDialogProps> = ({
   };
 
   const buildRdvsToSave = (): Rdv[] => {
+    const cleanDomId = form.domainId?.trim() || '';
+    const {domainId: _omitDom, ...formRest} = form;
     const cleanBase: Rdv = {
-      ...form,
+      ...formRest,
+      ...(cleanDomId ? {domainId: cleanDomId} : {}),
       dur: Math.min(240, Math.max(5, Math.round(Number(form.dur) || 30))),
       tarif: Math.max(0, Math.round(Number(form.tarif) || 0)),
       note: form.note.slice(0, 10000),
@@ -313,8 +332,18 @@ export const RdvDialog: React.FC<RdvDialogProps> = ({
                   const pat = db.patients.find((p) => p.id === pid);
                   setForm((prev) => {
                     const nextTh = prev.th || pat?.th || '';
+                    const thDomId = nextTh
+                      ? getStaffDomain(db.domains, db.staff.find((s) => s.id === nextTh))?.id ?? ''
+                      : '';
+                    const nextDomId = prev.domainId || thDomId;
                     const shouldUpdateTarif = isNew && !tarifManuallyEdited && nextTh !== prev.th;
-                    const nextTarif = shouldUpdateTarif ? getStaffTarif(db, nextTh) : prev.tarif;
+                    const nextTarif = shouldUpdateTarif
+                      ? nextTh
+                        ? getStaffTarif(db, nextTh)
+                        : nextDomId
+                          ? getDomainTarif(db, nextDomId)
+                          : prev.tarif
+                      : prev.tarif;
                     if (shouldUpdateTarif && prev.pay.length === 0) {
                       setNewPayAmount(nextTarif > 0 ? String(nextTarif) : '');
                     }
@@ -322,6 +351,7 @@ export const RdvDialog: React.FC<RdvDialogProps> = ({
                       ...prev,
                       pid,
                       th: nextTh,
+                      domainId: nextDomId,
                       tarif: nextTarif,
                     };
                   });
@@ -439,8 +469,59 @@ export const RdvDialog: React.FC<RdvDialogProps> = ({
               </select>
             </div>
 
+            {db.domains.length > 0 && (
+              <div>
+                <label htmlFor="rdv-domain" className="block text-sm font-medium mb-1">
+                  {t('domainLabel')}
+                </label>
+                <select
+                  id="rdv-domain"
+                  value={form.domainId ?? ''}
+                  onChange={(e) => {
+                    const nextDomId = e.target.value;
+                    setForm((prev) => {
+                      const domainStaff = nextDomId
+                        ? db.staff.filter((s) => getStaffDomain(db.domains, s)?.id === nextDomId)
+                        : db.staff;
+                      const currentThValid = prev.th && domainStaff.some((s) => s.id === prev.th);
+                      const nextTh = currentThValid
+                        ? prev.th
+                        : nextDomId
+                          ? domainStaff[0]?.id ?? ''
+                          : prev.th;
+                      const shouldUpdateTarif = isNew && !tarifManuallyEdited;
+                      const nextTarif = shouldUpdateTarif
+                        ? nextTh
+                          ? getStaffTarif(db, nextTh)
+                          : nextDomId
+                            ? getDomainTarif(db, nextDomId)
+                            : db.tarif
+                        : prev.tarif;
+                      if (shouldUpdateTarif && prev.pay.length === 0) {
+                        setNewPayAmount(nextTarif > 0 ? String(nextTarif) : '');
+                      }
+                      return {
+                        ...prev,
+                        domainId: nextDomId,
+                        th: nextTh,
+                        tarif: nextTarif,
+                      };
+                    });
+                  }}
+                  className="w-full min-h-11 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm"
+                >
+                  <option value="">{t('allDomains')}</option>
+                  {db.domains.map((dom) => (
+                    <option key={dom.id} value={dom.id}>
+                      {dom.name} — {formatCurrency(dom.tarif, lang)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             {db.staff.length > 0 && (
-              <div className="sm:col-span-2">
+              <div className={db.domains.length > 0 ? '' : 'sm:col-span-2'}>
                 <label htmlFor="rdv-th" className="block text-sm font-medium mb-1">
                   {t('therapistLabel')}
                 </label>
@@ -450,18 +531,29 @@ export const RdvDialog: React.FC<RdvDialogProps> = ({
                   onChange={(e) => {
                     const nextTh = e.target.value;
                     setForm((prev) => {
+                      const nextDomId = nextTh
+                        ? getStaffDomain(db.domains, db.staff.find((s) => s.id === nextTh))?.id ??
+                          prev.domainId ??
+                          ''
+                        : prev.domainId ?? '';
                       const shouldUpdateTarif = isNew && !tarifManuallyEdited;
-                      const nextTarif = shouldUpdateTarif ? getStaffTarif(db, nextTh) : prev.tarif;
+                      const nextTarif = shouldUpdateTarif
+                        ? nextTh
+                          ? getStaffTarif(db, nextTh)
+                          : nextDomId
+                            ? getDomainTarif(db, nextDomId)
+                            : db.tarif
+                        : prev.tarif;
                       if (shouldUpdateTarif && prev.pay.length === 0) {
                         setNewPayAmount(nextTarif > 0 ? String(nextTarif) : '');
                       }
-                      return {...prev, th: nextTh, tarif: nextTarif};
+                      return {...prev, th: nextTh, domainId: nextDomId, tarif: nextTarif};
                     });
                   }}
                   className="w-full min-h-11 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm"
                 >
                   <option value="">{t('unassigned')}</option>
-                  <TherapistSelectOptions db={db} t={t} />
+                  <TherapistSelectOptions db={db} t={t} domainId={form.domainId || undefined} />
                 </select>
               </div>
             )}

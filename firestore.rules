@@ -66,12 +66,13 @@ service cloud.firestore {
     }
 
     function isValidPracticeSettings(data, userId) {
-      return data.keys().hasAll(['ownerId', 'lang', 'tarif', 'cab', 'staff', 'rseq', 'lastBackup', 'ai', 'createdAt', 'updatedAt']) &&
-        data.keys().hasOnly(['ownerId', 'lang', 'tarif', 'cab', 'staff', 'rseq', 'lastBackup', 'ai', 'createdAt', 'updatedAt']) &&
+      return data.keys().hasAll(['ownerId', 'lang', 'tarif', 'cab', 'domains', 'staff', 'rseq', 'lastBackup', 'ai', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['ownerId', 'lang', 'tarif', 'cab', 'domains', 'staff', 'rseq', 'lastBackup', 'ai', 'createdAt', 'updatedAt']) &&
         data.ownerId is string && data.ownerId == userId && data.ownerId == request.auth.uid &&
         data.lang is string && (data.lang == 'fr' || data.lang == 'ar') &&
         (data.tarif is int || data.tarif is float) && data.tarif >= 0 && data.tarif <= 1000000 &&
         isValidCabinet(data.cab) &&
+        data.domains is list && data.domains.size() <= 30 && (data.domains.size() == 0 || data.domains[0] is map) &&
         data.staff is list && data.staff.size() <= 20 && (data.staff.size() == 0 || data.staff[0] is map) &&
         data.rseq is int && data.rseq >= 1 && data.rseq <= 9999999 &&
         (data.lastBackup is int || data.lastBackup is float) && data.lastBackup >= 0 &&
@@ -116,8 +117,8 @@ service cloud.firestore {
     }
 
     function isValidRdv(data, userId, rdvId) {
-      return data.keys().hasAll(['ownerId', 'id', 'pid', 'date', 'heure', 'statut', 'tarif', 'pay', 'note', 'rno', 'kind', 'th', 'dur', 'rem', 'createdAt', 'updatedAt']) &&
-        data.keys().hasOnly(['ownerId', 'id', 'pid', 'date', 'heure', 'statut', 'tarif', 'pay', 'note', 'rno', 'kind', 'th', 'dur', 'rem', 'createdAt', 'updatedAt']) &&
+      return data.keys().hasAll(['ownerId', 'id', 'pid', 'date', 'heure', 'statut', 'tarif', 'pay', 'note', 'rno', 'kind', 'th', 'domainId', 'dur', 'rem', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['ownerId', 'id', 'pid', 'date', 'heure', 'statut', 'tarif', 'pay', 'note', 'rno', 'kind', 'th', 'domainId', 'dur', 'rem', 'createdAt', 'updatedAt']) &&
         data.ownerId is string && data.ownerId == userId && data.ownerId == request.auth.uid &&
         data.id is string && isValidId(data.id) && data.id == rdvId &&
         data.pid is string && isValidId(data.pid) &&
@@ -130,6 +131,7 @@ service cloud.firestore {
         data.rno is string && data.rno.size() <= 50 &&
         data.kind is string && data.kind in ['diag', 'suivi'] &&
         data.th is string && data.th.size() <= 100 &&
+        data.domainId is string && data.domainId.size() <= 100 &&
         data.dur is int && data.dur >= 5 && data.dur <= 240 &&
         data.rem is string && data.rem.size() <= 30 &&
         data.createdAt is timestamp &&
@@ -215,7 +217,7 @@ service cloud.firestore {
         incoming().ownerId == existing().ownerId &&
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time &&
-        incoming().diff(existing()).affectedKeys().hasOnly(['lang', 'tarif', 'cab', 'staff', 'rseq', 'lastBackup', 'ai', 'updatedAt']);
+        incoming().diff(existing()).affectedKeys().hasOnly(['lang', 'tarif', 'cab', 'domains', 'staff', 'rseq', 'lastBackup', 'ai', 'updatedAt']);
       allow delete: if isValidId(userId) && isOwner(userId);
 
       match /patients/{patientId} {
@@ -257,7 +259,7 @@ service cloud.firestore {
           incoming().pid == existing().pid &&
           incoming().createdAt == existing().createdAt &&
           incoming().updatedAt == request.time &&
-          incoming().diff(existing()).affectedKeys().hasOnly(['date', 'heure', 'statut', 'tarif', 'pay', 'note', 'rno', 'kind', 'th', 'dur', 'rem', 'updatedAt']) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['date', 'heure', 'statut', 'tarif', 'pay', 'note', 'rno', 'kind', 'th', 'domainId', 'dur', 'rem', 'updatedAt']) &&
           hasPracticeParent(userId);
         allow delete: if isValidId(userId) && isValidId(rdvId) && isOwner(userId) && hasPracticeParent(userId);
       }

@@ -9,6 +9,7 @@ import type {
   DB,
   EncryptedPayload,
   ExerciseSheet,
+  ExpertiseDomain,
   Lang,
   Patient,
   PaymentEntry,
@@ -59,6 +60,26 @@ export function createDefaultAiSettings(): AiSettings {
   };
 }
 
+export function createDefaultDomains(lang: Lang = 'fr', baseTarif = 2000): ExpertiseDomain[] {
+  return [
+    {
+      id: 'dom_ortho',
+      name: lang === 'ar' ? 'الأرطوفونيا' : 'Orthophonie',
+      tarif: baseTarif,
+    },
+    {
+      id: 'dom_psy',
+      name: lang === 'ar' ? 'علم النفس' : 'Psychologie',
+      tarif: 2500,
+    },
+    {
+      id: 'dom_denver',
+      name: lang === 'ar' ? 'دنفر (Denver)' : 'Denver',
+      tarif: 3500,
+    },
+  ];
+}
+
 export function createEmptyDB(lang: Lang = 'fr'): DB {
   return {
     lang,
@@ -79,6 +100,7 @@ export function createEmptyDB(lang: Lang = 'fr'): DB {
       dur: '30',
       wamsg: '',
     },
+    domains: createDefaultDomains(lang, 2000),
     staff: [],
     rseq: 1,
     lastBackup: 0,
@@ -158,6 +180,34 @@ export function sanitize(raw: unknown, fallbackLang: Lang = 'fr'): DB {
     wamsg: clampStr(rawCab.wamsg, 500),
   };
 
+  // Expertise Domains
+  const domainIds = new Set<string>();
+  const domains: ExpertiseDomain[] = [];
+  if (Array.isArray(src.domains)) {
+    for (const item of src.domains) {
+      if (domains.length >= 30) break;
+      if (!item || typeof item !== 'object') continue;
+      const dom = item as Record<string, unknown>;
+      const name = clampStr(dom.name, 120).trim();
+      if (!name) continue;
+      let id = clampStr(dom.id, 100).trim() || makeId('dom');
+      while (domainIds.has(id)) id = makeId('dom');
+      domainIds.add(id);
+      const tarif = clampNum(dom.tarif, 0, 1_000_000, defaultTarif);
+      domains.push({id, name, tarif: Math.round(tarif)});
+    }
+  } else {
+    for (const defDom of createDefaultDomains(lang, defaultTarif)) {
+      domainIds.add(defDom.id);
+      domains.push(defDom);
+    }
+  }
+
+  const findDomainByName = (name: string): ExpertiseDomain | undefined => {
+    const target = name.trim().toLocaleLowerCase();
+    return domains.find((d) => d.name.trim().toLocaleLowerCase() === target);
+  };
+
   // Staff
   const rawStaff = Array.isArray(src.staff) ? src.staff : [];
   const staffIds = new Set<string>();
@@ -171,7 +221,6 @@ export function sanitize(raw: unknown, fallbackLang: Lang = 'fr'): DB {
     let id = clampStr(st.id, 100).trim() || makeId('st');
     while (staffIds.has(id)) id = makeId('st');
     staffIds.add(id);
-    const specialite = clampStr(st.specialite, 120).trim();
     const hasTarif =
       st.tarif !== undefined &&
       st.tarif !== null &&
@@ -180,10 +229,35 @@ export function sanitize(raw: unknown, fallbackLang: Lang = 'fr'): DB {
     const parsedTarif = hasTarif
       ? Math.min(1_000_000, Math.max(0, Math.round(Number(st.tarif))))
       : undefined;
+
+    const rawDomainId = clampStr(st.domainId, 100).trim();
+    const rawSpecialite = clampStr(st.specialite, 120).trim();
+    let domainId = domainIds.has(rawDomainId) ? rawDomainId : '';
+    if (!domainId && rawSpecialite) {
+      const matched = findDomainByName(rawSpecialite);
+      if (matched) {
+        domainId = matched.id;
+      } else if (domains.length < 30 && src.domains === undefined) {
+        let newDomId = makeId('dom');
+        while (domainIds.has(newDomId)) newDomId = makeId('dom');
+        domainIds.add(newDomId);
+        domains.push({
+          id: newDomId,
+          name: rawSpecialite,
+          tarif: parsedTarif !== undefined ? parsedTarif : defaultTarif,
+        });
+        domainId = newDomId;
+      }
+    }
+
+    const linkedDomain = domainId ? domains.find((d) => d.id === domainId) : undefined;
+    const specialite = linkedDomain ? linkedDomain.name : rawSpecialite;
+
     staff.push({
       id,
       nom,
       role: staff.length === 0 ? 'main' : 'th',
+      ...(domainId ? {domainId} : {}),
       ...(specialite ? {specialite} : {}),
       ...(parsedTarif !== undefined ? {tarif: parsedTarif} : {}),
     });
@@ -260,6 +334,9 @@ export function sanitize(raw: unknown, fallbackLang: Lang = 'fr'): DB {
     const dur = clampInt(r.dur, 5, 240, durNum);
     const rawTh = clampStr(r.th, 100);
     const th = staffIds.has(rawTh) ? rawTh : '';
+    const rawRdvDom = clampStr(r.domainId, 100).trim();
+    const staffDom = th ? (staff.find((s) => s.id === th)?.domainId ?? '') : '';
+    const domainId = domainIds.has(rawRdvDom) ? rawRdvDom : staffDom;
 
     const pay: PaymentEntry[] = [];
     if (Array.isArray(r.pay)) {
@@ -290,6 +367,7 @@ export function sanitize(raw: unknown, fallbackLang: Lang = 'fr'): DB {
       rno: clampStr(r.rno, 50),
       kind,
       th,
+      ...(domainId ? {domainId} : {}),
       dur,
       rem,
     });
@@ -374,6 +452,7 @@ export function sanitize(raw: unknown, fallbackLang: Lang = 'fr'): DB {
     rdv,
     bilans,
     cab,
+    domains,
     staff,
     rseq,
     lastBackup,
