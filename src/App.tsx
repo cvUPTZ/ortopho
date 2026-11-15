@@ -103,6 +103,7 @@ export default function App() {
 
   const [cloudUser, setCloudUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState<boolean>(false);
+  const [cloudSigningIn, setCloudSigningIn] = useState<boolean>(false);
   const [cloudError, setCloudError] = useState<string>('');
   const dbRef = useRef<DB>(db);
   const lastSyncedDbRef = useRef<DB | null>(null);
@@ -164,10 +165,11 @@ export default function App() {
   const activeLang: Lang = isLocked ? lockLang : db.lang;
   const t = useMemo(() => createTranslator(activeLang), [activeLang]);
 
-  // Keep <html lang>, <html dir>, <title>, and accent CSS variables synced
+  // Keep <html lang>, <html dir>, <title>, Firebase Auth language, and accent CSS variables synced
   useEffect(() => {
     document.documentElement.lang = activeLang;
     document.documentElement.dir = activeLang === 'ar' ? 'rtl' : 'ltr';
+    auth.languageCode = activeLang;
     const cabName = !isLocked && db.cab.nom.trim() ? db.cab.nom.trim() : t('appDefaultTitle');
     document.title = cabName;
   }, [activeLang, isLocked, db.cab.nom, t]);
@@ -306,17 +308,65 @@ export default function App() {
   }, [cloudUser, isLocked, activePin, storageBlocked, showToast, t]);
 
   const handleCloudSignIn = async () => {
+    if (cloudSigningIn) return;
+    setCloudSigningIn(true);
+    setCloudError('');
     try {
       justSignedInToastRef.current = true;
       const cred = await signInWithPopup(auth, googleProvider);
       if (!cred.user.emailVerified) {
         justSignedInToastRef.current = false;
-        showToast(t('cloudUnverifiedError'), undefined, 'error');
+        const msg = t('cloudUnverifiedError');
+        setCloudError(msg);
+        showToast(msg, undefined, 'error');
         await signOut(auth);
       }
-    } catch {
+    } catch (err) {
       justSignedInToastRef.current = false;
-      showToast(t('cloudPopupBlockedError'), undefined, 'error');
+      const code =
+        err &&
+        typeof err === 'object' &&
+        'code' in err &&
+        typeof (err as {code?: unknown}).code === 'string'
+          ? (err as {code: string}).code
+          : '';
+      console.error('Google sign-in failed:', code || err);
+
+      const host = typeof window !== 'undefined' ? window.location.hostname : '';
+      let message: string;
+      switch (code) {
+        case 'auth/unauthorized-domain':
+          message = t('cloudUnauthorizedDomainError').replace('{host}', host);
+          break;
+        case 'auth/popup-blocked':
+          message = t('cloudPopupBlockedError');
+          break;
+        case 'auth/popup-closed-by-user':
+          message = t('cloudPopupClosedError');
+          break;
+        case 'auth/cancelled-popup-request':
+          message = t('cloudPopupCancelledError');
+          break;
+        case 'auth/operation-not-allowed':
+          message = t('cloudOperationNotAllowedError');
+          break;
+        case 'auth/web-storage-unsupported':
+          message = t('cloudWebStorageError');
+          break;
+        case 'auth/network-request-failed':
+          message = t('cloudNetworkError');
+          break;
+        default:
+          message = code
+            ? `${t('cloudAuthGenericError')} (${code})`
+            : t('cloudAuthGenericError');
+          break;
+      }
+
+      setCloudError(message);
+      showToast(message, undefined, 'error');
+    } finally {
+      setCloudSigningIn(false);
     }
   };
 
@@ -930,13 +980,16 @@ export default function App() {
               {authReady && !cloudUser && (
                 <button
                   type="button"
+                  disabled={cloudSigningIn}
                   onClick={() => void handleCloudSignIn()}
-                  title={t('cloudSignInBtn')}
+                  title={cloudSigningIn ? t('cloudSigningInBtn') : t('cloudSignInBtn')}
                   aria-label={t('cloudSignInBtn')}
-                  className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-800 whitespace-nowrap"
+                  className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-60 whitespace-nowrap"
                 >
                   <LogIn className="h-4 w-4" />
-                  <span className="hidden lg:inline">{t('cloudSignInBtn')}</span>
+                  <span className="hidden lg:inline">
+                    {cloudSigningIn ? t('cloudSigningInBtn') : t('cloudSignInBtn')}
+                  </span>
                 </button>
               )}
 
@@ -975,11 +1028,12 @@ export default function App() {
               <span>{t('cloudLocalOnlyBanner')}</span>
               <button
                 type="button"
+                disabled={cloudSigningIn}
                 onClick={() => void handleCloudSignIn()}
-                className="inline-flex min-h-9 items-center gap-1.5 rounded-lg accent-bg px-3 py-1.5 text-xs font-semibold whitespace-nowrap"
+                className="inline-flex min-h-9 items-center gap-1.5 rounded-lg accent-bg px-3 py-1.5 text-xs font-semibold disabled:opacity-60 whitespace-nowrap"
               >
                 <LogIn className="h-3.5 w-3.5" />
-                <span>{t('cloudSignInBtn')}</span>
+                <span>{cloudSigningIn ? t('cloudSigningInBtn') : t('cloudSignInBtn')}</span>
               </button>
             </div>
           )}

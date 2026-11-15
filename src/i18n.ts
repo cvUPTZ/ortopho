@@ -607,6 +607,7 @@ const fr = {
 
   // Cloud database & Google Auth
   cloudSignInBtn: 'Connexion Google',
+  cloudSigningInBtn: 'Connexion…',
   cloudSignOutBtn: 'Déconnexion',
   cloudLocalOnlyBanner:
     'Données locales uniquement : connectez-vous avec Google pour enregistrer et synchroniser votre cabinet dans la base de données.',
@@ -614,7 +615,20 @@ const fr = {
   cloudConnectedToast: 'Connecté — données enregistrées dans la base de données.',
   cloudUnverifiedError:
     'Votre adresse Google doit être vérifiée pour accéder à la base de données.',
-  cloudPopupBlockedError: 'Connexion annulée ou fenêtre bloquée par le navigateur.',
+  cloudPopupBlockedError:
+    'La fenêtre Google a été bloquée par le navigateur. Autorisez les pop-ups pour ce site ou ouvrez l’application dans un onglet indépendant.',
+  cloudPopupClosedError:
+    'Fenêtre Google fermée avant la fin de la connexion. Si elle s’est fermée toute seule, autorisez les pop-ups et les cookies tiers, ou ouvrez l’application dans un onglet indépendant.',
+  cloudPopupCancelledError: 'Demande de connexion annulée. Veuillez réessayer.',
+  cloudUnauthorizedDomainError:
+    'Domaine non autorisé pour la connexion Google ({host}). Ajoutez ce domaine dans Firebase Console → Authentication → Paramètres → Domaines autorisés.',
+  cloudOperationNotAllowedError:
+    'La connexion Google n’est pas activée dans Firebase Authentication.',
+  cloudWebStorageError:
+    'Le stockage du navigateur ou les cookies tiers sont bloqués. Autorisez les cookies pour ce site ou ouvrez l’application dans une fenêtre normale.',
+  cloudNetworkError:
+    'Erreur réseau lors de la connexion à Google. Vérifiez votre connexion Internet et réessayez.',
+  cloudAuthGenericError: 'Échec de la connexion Google.',
   cloudQuotaError: 'Quota Firestore quotidien dépassé. Réessayez demain.',
 };
 
@@ -1108,13 +1122,27 @@ const ar: typeof fr = {
 
   // Cloud database & Google Auth
   cloudSignInBtn: 'تسجيل الدخول عبر Google',
+  cloudSigningInBtn: 'جاري الاتصال…',
   cloudSignOutBtn: 'تسجيل الخروج',
   cloudLocalOnlyBanner:
     'البيانات محفوظة محلياً فقط: سجّل الدخول بحساب Google لحفظ بيانات العيادة ومزامنتها في قاعدة البيانات.',
   cloudErrorBanner: 'حدث خطأ أثناء المزامنة مع قاعدة البيانات.',
   cloudConnectedToast: 'تم الاتصال — تم حفظ البيانات في قاعدة البيانات.',
   cloudUnverifiedError: 'يجب أن يكون بريدك الإلكتروني في Google موثقاً للوصول إلى قاعدة البيانات.',
-  cloudPopupBlockedError: 'تم إلغاء تسجيل الدخول أو حظر النافذة المنبثقة.',
+  cloudPopupBlockedError:
+    'حظر المتصفح نافذة تسجيل الدخول عبر Google. اسمح بالنوافذ المنبثقة لهذا الموقع أو افتح التطبيق في علامة تبويب مستقلة.',
+  cloudPopupClosedError:
+    'تم إغلاق نافذة Google قبل إتمام تسجيل الدخول. إذا أُغلقت تلقائياً، اسمح بالنوافذ المنبثقة وملفات تعريف الارتباط أو افتح التطبيق في علامة تبويب مستقلة.',
+  cloudPopupCancelledError: 'تم إلغاء طلب تسجيل الدخول. يرجى المحاولة مرة أخرى.',
+  cloudUnauthorizedDomainError:
+    'النطاق غير مصرّح به لتسجيل الدخول عبر Google ({host}). أضفه في Firebase Console → Authentication → Settings → Authorized domains.',
+  cloudOperationNotAllowedError:
+    'تسجيل الدخول عبر Google غير مفعّل في إعدادات Firebase Authentication.',
+  cloudWebStorageError:
+    'تخزين المتصفح أو ملفات تعريف الارتباط محظورة. اسمح بها لهذا الموقع أو افتح التطبيق في نافذة متصفح عادية.',
+  cloudNetworkError:
+    'خطأ في الشبكة أثناء الاتصال بـ Google. تحقق من اتصال الإنترنت وحاول مرة أخرى.',
+  cloudAuthGenericError: 'فشل تسجيل الدخول عبر Google.',
   cloudQuotaError: 'تم تجاوز الحصة اليومية لـ Firestore. يرجى المحاولة غداً.',
 };
 

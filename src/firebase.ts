@@ -14,6 +14,22 @@ const app = initializeApp(firebaseConfig);
 export const firestore = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
+googleProvider.setCustomParameters({prompt: 'select_account'});
+
+async function prewarmAuthPopup(): Promise<void> {
+  if (typeof window === 'undefined') return;
+  try {
+    await auth.authStateReady();
+    const internal = auth as unknown as {
+      _popupRedirectResolver?: {_initialize?: (a: typeof auth) => Promise<unknown>};
+    };
+    await internal._popupRedirectResolver?._initialize?.(auth);
+  } catch {
+    // Ignore proactive popup resolver failures (e.g., offline mode)
+  }
+}
+
+void prewarmAuthPopup();
 
 export enum OperationType {
   CREATE = 'create',
