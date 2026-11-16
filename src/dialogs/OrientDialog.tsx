@@ -294,8 +294,9 @@ export const OrientDialog: React.FC<OrientDialogProps> = ({
               <input
                 id="or-tarif"
                 type="number"
+                inputMode="numeric"
                 min={0}
-                step={100}
+                step={1}
                 value={tarif}
                 onChange={(e) => {
                   setTarifManuallyEdited(true);

@@ -427,8 +427,9 @@ export const RdvDialog: React.FC<RdvDialogProps> = ({
               <input
                 id="rdv-tarif"
                 type="number"
+                inputMode="numeric"
                 min={0}
-                step={100}
+                step={1}
                 value={form.tarif}
                 onChange={(e) => {
                   setTarifManuallyEdited(true);
@@ -675,8 +676,9 @@ export const RdvDialog: React.FC<RdvDialogProps> = ({
                 <input
                   id="rdv-pay-amt"
                   type="number"
+                  inputMode="numeric"
                   min={0}
-                  step={100}
+                  step={1}
                   value={newPayAmount}
                   onChange={(e) => setNewPayAmount(e.target.value)}
                   className="w-full min-h-10 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-1.5 text-sm tabular-nums"

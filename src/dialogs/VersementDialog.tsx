@@ -245,8 +245,9 @@ export const VersementDialog: React.FC<VersementDialogProps> = ({
                 <input
                   id="vers-amt"
                   type="number"
+                  inputMode="numeric"
                   min={1}
-                  step={100}
+                  step={1}
                   required
                   value={amountInput}
                   onChange={(e) => setAmountInput(e.target.value)}

@@ -353,8 +353,9 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
             <input
               id="cab-tarif"
               type="number"
+              inputMode="numeric"
               min={0}
-              step={100}
+              step={1}
               value={tarif}
               onChange={(e) => setTarif(Number(e.target.value))}
               className="w-full min-h-11 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm tabular-nums"
